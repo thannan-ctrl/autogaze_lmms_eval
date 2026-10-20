@@ -7,8 +7,10 @@ Background on the bridge is in `../LMMS_EVAL_BRIDGE.md`. All paths below are und
 ## Rules for the session running this
 
 - **Read-only directories:** `autogaze_lmms_eval/`, `AutoGaze/` and `lmms-eval/`. Run their scripts, but don't edit, install into, or git-modify them. If a code change looks necessary, stop and report it.
-- **Where output goes:** every file the run writes goes to `runs/<tag>/`, and the launcher arranges that. The only exception is the download, which goes to `$HF_HOME/egoschema` and `$HF_HOME/hub`.
-- **The user runs the prerequisites below,** because they write into `AutoGaze/`.
+- **Where output goes:** every file the run writes goes to `runs/<tag>/`, and the launcher arranges that. There are two exceptions:
+  - the download, which goes to `$HF_HOME/egoschema` and `$HF_HOME/hub`
+  - `autogaze_overlay/` (see Prerequisites)
+- **Codec tools come from `autogaze_overlay/`, not `AutoGaze/`.** Pass `--repo-dir $O` to every launcher call.
 - **Results files contain the HF token.** lmms-eval writes `HF_TOKEN` into every `*_results.json`, under `config.resolved_cli_args.hf_hub_log_args`. Never paste that field anywhere, and scrub it before sharing.
 
 ## Target (from `Codec_Selector_Feasibility.md`)
@@ -27,7 +29,7 @@ Background on the bridge is in `../LMMS_EVAL_BRIDGE.md`. All paths below are und
 | Prompt | `Question: …\nA. …\nAnswer with the letter of the correct option only.` | lmms-eval `egoschema_subset`: `{question}\n{options}\nAnswer with the option's letter from the given choices directly.` |
 | Answer parser | First A–E letter; no letter counts as wrong | `parse_multi_choice_response`: if no letter is found, it matches option text, or else **picks a random letter** |
 | `max_new_tokens` | 8 | 16 (the task doesn't set it, so the client's default is used) |
-| AutoGaze code | `cfa11e0` | `0234e8e`. The only `scripts/breakdown` change since is `6ef6165`, which is opt-in and off here. |
+| AutoGaze code | `cfa11e0` | `0234e8e`, through `autogaze_overlay/`. The only `scripts/breakdown` change since is `6ef6165`, which is opt-in and off here. |
 | Scheduling | 1 GPU, modes run one after another | 4 GPUs, modes run in parallel |
 | Videos | `zobwink/EgoSchema` originals | `lmms-lab/egoschema`, said to be byte-identical |
 
@@ -35,36 +37,43 @@ Background on the bridge is in `../LMMS_EVAL_BRIDGE.md`. All paths below are und
 
 **Codec caches don't skew EgoSchema.** It has one question per video, and each server starts with an empty cache, so every row is cold.
 
-## Prerequisites (the user runs these, on a GB200 node)
+## Prerequisites: `autogaze_overlay/` (the session can run these)
 
+The codec modes need native tools (`dump_cu` and `libcodec_raster.so`) built from AutoGaze's `scripts/hevc_dump` submodule. AutoGaze looks for both relative to its own folder, and neither is set up in the read-only `AutoGaze/` checkout.
+
+`tools/setup_autogaze_overlay.sh` builds them without touching `AutoGaze/`. It creates `autogaze_overlay/`, which mirrors AutoGaze through symlinks except for four real folders:
+- `scripts/hevc_dump/`: a clone of the submodule at the commit AutoGaze pins, `c0ea73c`
+- `native/build_aarch64/`: the build output
+- `data/`: what the alignment check reads and writes
+- `scripts/` itself, which is a real folder of symlinks so that `hevc_dump/` can sit inside it
+
+The mirror and the clone already exist (done 2026-10-20). The script can be re-run safely; it only rebuilds what is missing.
+
+On the GB200 node:
 ```bash
-eval "$(/home/scratch.thannan_wwfo/miniforge-aarch64/bin/conda shell.bash hook)"
-conda activate auto_gaze
-cd /home/thannan/scratch/codec_reproduce/AutoGaze
-git submodule update --init scripts/hevc_dump          # gitlab-master over SSH
-cmake -S native -B native/build_$(uname -m) -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-cmake --build native/build_$(uname -m) -j 32 --target dump_cu codec_raster
-nvidia-smi --query-gpu=driver_version --format=csv,noheader   # codec_nvdec needs >= 595.84.01
+cd /home/thannan/scratch/codec_reproduce
+tools/setup_autogaze_overlay.sh                                # builds native/build_aarch64 (cmake from the auto_gaze env)
+nvidia-smi --query-gpu=driver_version --format=csv,noheader    # codec_nvdec needs >= 595.84.01
 ```
 
-The launcher refuses codec modes until `native/build_aarch64/dump_cu` and `native/build_aarch64/libcodec_raster.so` exist. Without them the selector silently falls back to slower code paths.
+The launcher refuses codec modes until `$O/native/build_aarch64/dump_cu` and `$O/native/build_aarch64/libcodec_raster.so` exist. Without them the selector silently falls back to slower code paths.
 
-**Alignment check:** run this after step 1 below, once the videos exist. It must print PASS:
-```bash
-mkdir -p AutoGaze/data/egoschema/videos
-ln -s $HF_HOME/egoschema/videos/0074f737-11cb-497d-8d07-77c3a8127391.mp4 AutoGaze/data/egoschema/videos/
-REPO_DIR=$PWD/AutoGaze FIXED_NUM_VIDEO_FRAMES=16 python AutoGaze/scripts/verify_gazing_alignment.py
-```
+**Alignment check:** step 3 below runs it, once the videos exist.
 
 ## Steps
 
 Start with a node that has 4 GPUs, for example `srun --partition=gb200nvl4 --gres=gpu:4 --time=08:00:00 --pty bash`. Use `tmux`, or run the launcher with `nohup … &` and follow `runs/<tag>/logs/`.
 
-`L=/home/thannan/scratch/codec_reproduce/autogaze_lmms_eval/scripts/run_egoschema_headline.sh`. `HF_HOME` defaults to `/home/scratch.thannan_wwfo/hf_cache`. `HF_TOKEN` must be set and must have access to `lmms-lab/egoschema`.
+Set these two variables:
+```bash
+L=/home/thannan/scratch/codec_reproduce/autogaze_lmms_eval/scripts/run_egoschema_headline.sh
+O=/home/thannan/scratch/codec_reproduce/autogaze_overlay
+```
+`HF_HOME` defaults to `/home/scratch.thannan_wwfo/hf_cache`. `HF_TOKEN` must be set and must have access to `lmms-lab/egoschema`.
 
 1. **Download the dataset, once.**
    ```bash
-   $L --download-only egoschema_download
+   $L --repo-dir $O --download-only egoschema_download
    ```
    - What it does: starts one dense server and runs 1 question, so lmms-eval downloads the whole `lmms-lab/egoschema` repo and unzips it into `$HF_HOME/egoschema/videos`.
    - It is large. Check free space with `df -h /home/scratch.thannan_wwfo` first.
@@ -82,11 +91,15 @@ Start with a node that has 4 GPUs, for example `srun --partition=gb200nvl4 --gre
    ```
    It should print `500 subset ids; <path>`. Use that path as `W`.
 
-3. **Run the prerequisite alignment check.** It must print PASS.
+3. **Alignment check.** It must print PASS.
+   ```bash
+   /home/thannan/scratch/codec_reproduce/tools/setup_autogaze_overlay.sh --verify
+   ```
+   This links the check's video into `$O/data/` and runs `scripts/verify_gazing_alignment.py` in the overlay, on a GPU.
 
 4. **Smoke test.** About 10 minutes, most of it model loading.
    ```bash
-   $L --limit 8 --warmup-video $W egoschema_smoke
+   $L --repo-dir $O --limit 8 --warmup-video $W egoschema_smoke
    python /home/thannan/scratch/codec_reproduce/autogaze_lmms_eval/scripts/headline_table.py runs/egoschema_smoke
    ```
    Check:
@@ -97,7 +110,7 @@ Start with a node that has 4 GPUs, for example `srun --partition=gb200nvl4 --gre
 
 5. **Full run.** autogaze is the slowest mode, about 500 × 6 s ≈ 50 min, plus loading and warmup.
    ```bash
-   $L --warmup-video $W egoschema_headline_$(date +%Y%m%d)
+   $L --repo-dir $O --warmup-video $W egoschema_headline_$(date +%Y%m%d)
    ```
 
 6. **Summarize.**
@@ -108,7 +121,7 @@ Start with a node that has 4 GPUs, for example `srun --partition=gb200nvl4 --gre
 
 7. **Write up.** Add a results section to `../LMMS_EVAL_BRIDGE.md` with:
    - the three tables
-   - `runs/<tag>/run_info.txt` (AutoGaze commit, lmms-eval path and commit, node, driver, Slurm job)
+   - `runs/<tag>/run_info.txt`, which records the lmms-eval path and commit, node, driver and Slurm job. Its `autogaze_commit` says `unknown` because the overlay isn't a git repo; take the commit from `$O/AUTOGAZE_COMMIT`.
    - the differences table above
    - anything that went wrong
 
@@ -127,7 +140,7 @@ Start with a node that has 4 GPUs, for example `srun --partition=gb200nvl4 --gre
   - `runs/<tag>` already exists (timing logs append, so never reuse a tag)
   - a port is already serving
   - not on aarch64
-  - a codec mode is requested but the native tools are missing
+  - a codec mode is requested but the native tools are missing under `--repo-dir`
   - it's a non-download run and `$HF_HOME/egoschema/videos` is missing
 - **A mode counts as failed** if lmms-eval exits non-zero **or** writes no `*_results.json`. lmms-eval catches errors such as a server 500 and still exits 0. If a mode fails, read both of its logs.
 - **On exit,** including Ctrl-C, the servers are killed.
@@ -135,6 +148,6 @@ Start with a node that has 4 GPUs, for example `srun --partition=gb200nvl4 --gre
 ## Sanity checks on the full run
 
 - **Row counts:** 500 rows per timing log, and `n-samples.effective == 500` in each results JSON. `headline_table.py` exits with an error if samples and timing rows don't match one to one.
-- **Tokens** should match the headline closely: dense ≈ 24,690, autogaze ≈ 1,837, codec and codec_nvdec ≈ 2,783. The prompt wording changes only a few tokens, so a large gap points to a pipeline problem (wrong nvf or wrong processor), not to the prompt.
+- **Tokens** should match the headline closely: dense ≈ 24,690, autogaze ≈ 1,837, codec and codec_nvdec ≈ 2,783. The prompt wording changes only a few tokens, so a large gap points to a pipeline problem (wrong nvf, wrong processor, or a missing `--repo-dir $O`), not to the prompt.
 - **Accuracy** should be within about ±2 points of the headline (1 standard error is about 2.1 at N=500). If the gap is larger, check the "No letter" column first, because those replies were scored by option-text matching or a random guess.
 - **Latency:** ViT and LLM should be close to the headline. Higher preprocessing in the codec modes is expected from sharing CPUs. Report it; don't average it away.
