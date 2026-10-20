@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autogaze-lmms-eval"
+version = "0.1.0"
+description = "Bridge between lmms-eval and the AutoGaze NVILA-HD-Video pipeline over HTTP"
+requires-python = ">=3.10"
+# Deliberately no dependencies: the client half runs inside lmms-eval's env
+# (which already provides lmms_eval/tqdm), the server half inside AutoGaze's
+# env (torch/transformers/autogaze). Both talk over stdlib HTTP.
+dependencies = []
+
+[project.entry-points."lmms_eval.models"]
+autogaze = "autogaze_lmms_eval.plugin:manifest"
+
+[tool.setuptools]
+packages = ["autogaze_lmms_eval"]
