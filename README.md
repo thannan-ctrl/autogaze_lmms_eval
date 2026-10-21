@@ -25,6 +25,39 @@ We use it to reproduce the EgoSchema "Headline result" of `AutoGaze/Codec_Select
 | dense | 64.0% | 24,690 | 3.54 |
 | autogaze | 65.8% | 1,837 | 7.33 |
 
+## Optional: let an AI agent run it
+
+Skip this section to run everything by hand.
+
+Do steps 1–4 and the `hf download` lines of step 5 yourself (installs, the codec-tool build and writes to `$HF_HOME` are off-limits to the agent), then hand the rest to an agent such as Claude Code. Three guardrails keep it from changing anything that would invalidate the result:
+
+**1. Folder permissions.** Make the inputs read-only at the OS level:
+
+```bash
+chmod -R a-w AutoGaze lmms-eval autogaze_lmms_eval tools envs reference
+```
+
+| Folder | Agent may |
+|---|---|
+| `AutoGaze/`, `lmms-eval/`, `autogaze_lmms_eval/`, `tools/` | read and run scripts; never edit, rebuild, `pip install` or change git state |
+| `$HF_HOME`, `$CONDA_BASE` | read only; only the launcher's download writes data |
+| `runs/` | read only; only the launcher, `verify_alignment.sh` and lmms-eval write there |
+| `.claude/` | nothing: these are the agent's own rules |
+
+**2. Claude Code settings.** Install the rules from `repro/claude_settings.local.json` with your paths:
+
+```bash
+mkdir -p .claude
+sed -e "s#/home/scratch.thannan_wwfo/codec_reproduce#$WORK#g" -e "s#/home/thannan/scratch/codec_reproduce#$WORK#g" \
+    -e "s#/home/scratch.thannan_wwfo/hf_cache#$HF_HOME#g"     -e "s#/home/thannan/scratch/hf_cache#$HF_HOME#g" \
+    -e "s#/home/scratch.thannan_wwfo/miniforge-aarch64#$CONDA_BASE#g" -e "s#/home/thannan/scratch/miniforge-aarch64#$CONDA_BASE#g" \
+    autogaze_lmms_eval/repro/claude_settings.local.json > .claude/settings.local.json
+```
+
+It has three layers: `permissions.deny` blocks the agent's file-edit tool on those folders, `sandbox.filesystem.denyWrite` blocks its shell commands from writing there, and `autoMode.hard_deny` lists the same rules in plain English so auto mode never approves them.
+
+**3. Sandbox.** Start the agent from `$WORK` (so it loads `.claude/`), turn on sandboxing with `/sandbox`, and give it `autogaze_lmms_eval/repro/RUN_SESSION_PROMPT.md` as the task (swap in your paths with the same `sed`). It downloads the videos and runs steps 6–7, stops at the first failure, and never prints `HF_TOKEN`.
+
 ## You need
 
 - GB200 (`aarch64`) Slurm node, 4 GPUs, ~250 GB disk; ~1 h setup + ~1 h run
@@ -140,36 +173,5 @@ python reference/compare_tokens.py runs/$R reference     # expect 500 questions,
 ```
 
 Always pass `--modes`: the default adds `codec_nvdec`, which needs a newer driver.
-
-## Optional: let an AI agent run it
-
-Do steps 1–4 and the `hf download` lines of step 5 yourself (installs, the codec-tool build and writes to `$HF_HOME` are off-limits to the agent), then hand the rest to an agent such as Claude Code. Three guardrails keep it from changing anything that would invalidate the result:
-
-**1. Folder permissions.** Make the inputs read-only at the OS level:
-
-```bash
-chmod -R a-w AutoGaze lmms-eval autogaze_lmms_eval tools envs reference
-```
-
-| Folder | Agent may |
-|---|---|
-| `AutoGaze/`, `lmms-eval/`, `autogaze_lmms_eval/`, `tools/` | read and run scripts; never edit, rebuild, `pip install` or change git state |
-| `$HF_HOME`, `$CONDA_BASE` | read only; only the launcher's download writes data |
-| `runs/` | read only; only the launcher, `verify_alignment.sh` and lmms-eval write there |
-| `.claude/` | nothing: these are the agent's own rules |
-
-**2. Claude Code settings.** Install the rules from `repro/claude_settings.local.json` with your paths:
-
-```bash
-mkdir -p .claude
-sed -e "s#/home/scratch.thannan_wwfo/codec_reproduce#$WORK#g" -e "s#/home/thannan/scratch/codec_reproduce#$WORK#g" \
-    -e "s#/home/scratch.thannan_wwfo/hf_cache#$HF_HOME#g"     -e "s#/home/thannan/scratch/hf_cache#$HF_HOME#g" \
-    -e "s#/home/scratch.thannan_wwfo/miniforge-aarch64#$CONDA_BASE#g" -e "s#/home/thannan/scratch/miniforge-aarch64#$CONDA_BASE#g" \
-    autogaze_lmms_eval/repro/claude_settings.local.json > .claude/settings.local.json
-```
-
-It has three layers: `permissions.deny` blocks the agent's file-edit tool on those folders, `sandbox.filesystem.denyWrite` blocks its shell commands from writing there, and `autoMode.hard_deny` lists the same rules in plain English so auto mode never approves them.
-
-**3. Sandbox.** Start the agent from `$WORK` (so it loads `.claude/`), turn on sandboxing with `/sandbox`, and give it `autogaze_lmms_eval/repro/RUN_SESSION_PROMPT.md` as the task (swap in your paths with the same `sed`). It downloads the videos and runs steps 6–7, stops at the first failure, and never prints `HF_TOKEN`.
 
 **More:** `AutoGaze/Codec_Selector_Feasibility.md` (original study), `autogaze_lmms_eval/EGOSCHEMA_HEADLINE.md` (launcher options), `LMMS_EVAL_BRIDGE.md` (bridge internals).
