@@ -15,7 +15,7 @@ flowchart LR
 
 lmms-eval scores the answers (accuracy); the model's time per question gives latency. The bridge is two small programs, `client.py` (inside lmms-eval) and `server.py` (next to the model), so each side keeps its own Python environment. The launcher runs one bridge + model per method (dense, autogaze, codec), each on its own GPU.
 
-We use it to reproduce the EgoSchema "Headline result" of `AutoGaze/Codec_Selector_Feasibility.md`, where NVILA-8B-HD-Video reads **all** image patches (dense), patches picked by a small network (autogaze), or patches picked from HEVC compression data (codec).
+We use it to reproduce the EgoSchema "Headline result" of `AutoGaze/Codec_Selector_Feasibility.md`, where NVILA-8B-HD-Video reads **all** image patches (dense), patches picked by a small network (autogaze), or patches picked from HEVC compression data (codec). Step 8 runs the same flow for Qwen3.5-9B and Nemotron-3-Nano-Omni-30B-A3B.
 
 ## Expected result
 
@@ -60,7 +60,7 @@ It has three layers: `permissions.deny` blocks the agent's file-edit tool on tho
 
 ## You need
 
-- GB200 (`aarch64`) Slurm node, 4 GPUs, ~250 GB disk; ~1 h setup + ~1 h run
+- GB200 (`aarch64`) Slurm node, 4 GPUs, ~250 GB disk (~330 GB with step 8); ~1 h setup + ~1 h run
 - SSH access to GitHub `thannan-ctrl/{AutoGaze,autogaze_lmms_eval}` and GitLab `gitlab-master.nvidia.com:12051/seadie/hevc_dump`
 - Hugging Face token that accepted the `lmms-lab/egoschema` terms
 - The kit `/home/scratch.thannan_wwfo/codec_reproduce/{tools,envs,reference}` 
@@ -82,6 +82,8 @@ unset PYTHONPATH; mkdir -p $WORK && cd $WORK
 L=$WORK/autogaze_lmms_eval/scripts/run_egoschema_headline.sh   # launcher
 T=$WORK/autogaze_lmms_eval/scripts/headline_table.py            # results table
 W=$HF_HOME/egoschema/videos/001934bb-81bd-4cd8-a574-0472ef3f6678.mp4   # warm-up video
+QWEN=$HF_HOME/hub/models--Qwen--Qwen3.5-9B/snapshots/c202236235762e1c871ad0ccb60c8ee5ba337b9a   # step 8 only
+OMNI=$HF_HOME/hub/models--nvidia--Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16/snapshots/e5e9932441de940c9a62185c870ea5bcd4cd24e2
 uname -m   # must be aarch64
 ```
 
@@ -93,13 +95,15 @@ curl -L -o /tmp/mf.sh https://github.com/conda-forge/miniforge/releases/latest/d
 bash /tmp/mf.sh -b -p $CONDA_BASE && eval "$($CONDA_BASE/bin/conda shell.bash hook)"
 
 # code at the exact commits used
-git clone git@github.com:thannan-ctrl/AutoGaze.git && git -C AutoGaze checkout 0234e8e2075ce993081f91323b8561f2f85b9e2e
-git clone git@github.com:thannan-ctrl/autogaze_lmms_eval.git && git -C autogaze_lmms_eval checkout 900ae3291deb59e8bf4f3dc3baec984e39377776
+git clone git@github.com:thannan-ctrl/AutoGaze.git && git -C AutoGaze checkout 9899fd6829444fdd5ebc86366fd35073816ac635
+git clone git@github.com:thannan-ctrl/autogaze_lmms_eval.git && git -C autogaze_lmms_eval checkout 53f3fec06409b58549ae1c17e3b23a00e6fb021c
 git clone https://github.com/EvolvingLMMs-Lab/lmms-eval.git && git -C lmms-eval checkout d6cc2b567db7aeacbbf1af11b6595676e784d1d3
 cp -r /home/scratch.thannan_wwfo/codec_reproduce/{tools,envs,reference,LMMS_EVAL_BRIDGE.md} . && chmod -R u+w tools
 ```
 
 Keep all folders side by side in `$WORK`; results go to `$WORK/runs/`.
+
+AutoGaze `9899fd6` (branch `pareto/main`) adds `model_compat/` for step 8. Outside `model_compat/` it differs from the earlier pin `0234e8e` only in docs and figures, so steps 1–7 are unchanged.
 
 ## 3. Python environments
 
@@ -117,6 +121,18 @@ pip install -r envs/client_requirements.txt
 pip install --no-deps -e lmms-eval -e autogaze_lmms_eval
 python -c "from lmms_eval.models import get_model; print(get_model('autogaze'))"
 #   expect: <class 'autogaze_lmms_eval.client.AutoGaze'>
+conda deactivate
+
+# step 8 only: server for Qwen3.5 / Nemotron-Omni = the autogaze_av19 packages plus their kernels
+# (a separate env, so the NVILA env above stays exactly as pinned). The two kernel packages compile
+# against torch 2.14.1 for aarch64 and need nvcc on PATH (~20 min).
+conda create -y -n autogaze_mc -c conda-forge python=3.12.13 && conda activate autogaze_mc
+pip install -r envs/server_requirements.txt
+pip install flash-linear-attention==0.5.2 fla-core==0.5.2 timm==1.0.22 einops==0.8.2 open_clip_torch==3.3.0 \
+            decord==0.6.0 librosa==0.11.0 soundfile==0.13.1 scipy==1.15.3
+pip install --no-build-isolation causal-conv1d==1.6.0 mamba-ssm==2.3.2.post1
+python -c "from transformers.models.qwen3_5 import modeling_qwen3_5 as m; import mamba_ssm; print(m.is_fast_path_available)"
+#   expect: True
 conda deactivate
 ```
 
@@ -138,13 +154,22 @@ from huggingface_hub import HfApi
 a = HfApi()
 for repo, sha in [("nvidia/NVILA-8B-HD-Video", "7a5670e20da435d98b0efdc49f9a536f73985152"),
                   ("nvidia/AutoGaze", "5100fae739ec1bf3f875914fa1b703846a18943a"),
-                  ("lmms-lab/egoschema", "58350524ea7eb29c47000121f4f4b65eb6b4acb9")]:
+                  ("lmms-lab/egoschema", "58350524ea7eb29c47000121f4f4b65eb6b4acb9"),
+                  # step 8 only
+                  ("Qwen/Qwen3.5-9B", "c202236235762e1c871ad0ccb60c8ee5ba337b9a"),
+                  ("nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16", "e5e9932441de940c9a62185c870ea5bcd4cd24e2"),
+                  ("nvidia/C-RADIOv4-H", "0057b339059c0b9e1b4ba996f975410ebbfdfcc8")]:
     got = (a.dataset_info if "egoschema" in repo else a.model_info)(repo).sha
     print(repo, "OK" if got == sha else f"CHANGED to {got}: tell Thannan")
 EOF
 conda deactivate; conda activate autogaze_av19
 hf download nvidia/NVILA-8B-HD-Video --revision 7a5670e20da435d98b0efdc49f9a536f73985152
 hf download nvidia/AutoGaze --revision 5100fae739ec1bf3f875914fa1b703846a18943a
+# step 8 only (~85 GB). C-RADIOv4-H is the Omni vision tower's remote code, which transformers
+# looks up at its main revision, so it is downloaded without --revision (the check above pins it).
+hf download Qwen/Qwen3.5-9B --revision c202236235762e1c871ad0ccb60c8ee5ba337b9a
+hf download nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16 --revision e5e9932441de940c9a62185c870ea5bcd4cd24e2
+hf download nvidia/C-RADIOv4-H
 conda deactivate
 
 # videos (~200 GB); if interrupted: rm -rf $HF_HOME/egoschema and re-run with a new name
@@ -176,7 +201,7 @@ Always pass `--modes`: the default adds `codec_nvdec`, which needs a newer drive
 
 ## 8. Other models: Qwen3.5-9B and Nemotron-3-Nano-Omni-30B-A3B
 
-`--model qwen3_5` and `--model nemotron_omni` serve these models through AutoGaze's `model_compat` adapters. This is the code behind `AutoGaze/RESULTS_LATENCY_ACCURACY.md` on branch `pareto/main`. It is read from the `AutoGaze` checkout, which must be at commit `9899fd6`, and never edited. That commit differs from `0234e8e` outside `model_compat/` only in docs and figures, so the NVILA steps above are unchanged by it. `--mc-root` points elsewhere if needed.
+`--model qwen3_5` and `--model nemotron_omni` serve these models through AutoGaze's `model_compat` adapters, the code behind `AutoGaze/RESULTS_LATENCY_ACCURACY.md`. They are read from the `AutoGaze` checkout of step 2 and never edited.
 
 Each request runs `model_compat.runner._one` with the pareto "best" settings: the H.264 motion-vector selector, strict L1, and EgoSchema at native resolution. lmms-eval supplies the prompt and scores the answer. Modes:
 
@@ -187,28 +212,27 @@ Each request runs `model_compat.runner._one` with the pareto "best" settings: th
 | `codec_mv_hybrid` | `codec@first=1.0@chunk=16@rest=0.25` (recommended point) |
 | `codec_mv_keep` | `codec@first=0.6@rest=0.25` |
 
-**Server env.** The server needs the `autogaze_av19` packages plus a few others:
-- `causal-conv1d` and `mamba-ssm`, built for aarch64 against torch 2.14.1.
-- `timm einops open_clip_torch`, and `decord librosa soundfile scipy`, which the Omni remote code imports.
-- `fla`, taken from `MC_PYTHONPATH` (default: model_compat's vendored copy).
-
-Without the fast kernels, Qwen refuses to load and Omni runs a slow path.
-
-**Weights.**
-- Qwen: `hf download Qwen/Qwen3.5-9B` into `$HF_HOME`.
-- Omni: the local weights dir (default in `mc_backend.py`) plus `hf download nvidia/C-RADIOv4-H` for its vision-tower code.
+Needs the `autogaze_mc` env (step 3), the step 8 downloads (step 5), the codec tools (step 4) and the videos.
 
 ```bash
+export MC_PYTHONPATH=$CONDA_BASE/envs/autogaze_mc/lib/python3.12/site-packages   # fla from pip, not Thannan's vendored copy
 R=qwen35_smoke_$(date +%Y%m%d_%H%M)
-SERVER_ENV=<env> $L --model qwen3_5 --nvf 128 --limit 8 --modes "dense codec_mv codec_mv_hybrid" --warmup-video $W $R
-SERVER_ENV=<env> $L --model nemotron_omni --nvf 64 --limit 8 --modes "dense codec_mv codec_mv_hybrid" --warmup-video $W omni_smoke_$(date +%Y%m%d_%H%M)
+SERVER_ENV=autogaze_mc $L --model qwen3_5 --model-path $QWEN --nvf 128 --limit 8 \
+    --modes "dense codec_mv codec_mv_hybrid" --warmup-video $W $R            # ~15 min
+python $T runs/$R dense codec_mv codec_mv_hybrid
+
+R=omni_smoke_$(date +%Y%m%d_%H%M)
+SERVER_ENV=autogaze_mc $L --model nemotron_omni --model-path $OMNI --nvf 64 --limit 8 \
+    --modes "dense codec_mv codec_mv_hybrid" --warmup-video $W $R
 python $T runs/$R dense codec_mv codec_mv_hybrid
 ```
 
-**Reference values.** These are H100, model_compat's own prompt and parser:
+Drop `--limit 8` (and use a new name) for the full 500 questions.
+
+**Reference values.** These are H100, with model_compat's own prompt and parser:
 - Qwen3.5 128f: dense 72.8%, hybrid 69.4%.
 - Omni 64f: dense 64.0%, hybrid 59.8%.
 
-Expect a few points of difference here, from lmms-eval's prompt and parser and from GB200 latency.
+Expect a few points of difference here, from lmms-eval's prompt and parser, and different latency on GB200.
 
 **More:** `AutoGaze/Codec_Selector_Feasibility.md` (original study), `autogaze_lmms_eval/EGOSCHEMA_HEADLINE.md` (launcher options), `LMMS_EVAL_BRIDGE.md` (bridge internals).
