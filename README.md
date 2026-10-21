@@ -61,7 +61,7 @@ bash /tmp/mf.sh -b -p $CONDA_BASE && eval "$($CONDA_BASE/bin/conda shell.bash ho
 
 # code at the exact commits used
 git clone git@github.com:thannan-ctrl/AutoGaze.git && git -C AutoGaze checkout 0234e8e2075ce993081f91323b8561f2f85b9e2e
-git clone git@github.com:thannan-ctrl/autogaze_lmms_eval.git && git -C autogaze_lmms_eval checkout 4e9dadccdd18be152b15cc8a77dd37c1af61e1e0
+git clone git@github.com:thannan-ctrl/autogaze_lmms_eval.git && git -C autogaze_lmms_eval checkout 900ae3291deb59e8bf4f3dc3baec984e39377776
 git clone https://github.com/EvolvingLMMs-Lab/lmms-eval.git && git -C lmms-eval checkout d6cc2b567db7aeacbbf1af11b6595676e784d1d3
 cp -r /home/scratch.thannan_wwfo/codec_reproduce/{tools,envs,reference,LMMS_EVAL_BRIDGE.md} . && chmod -R u+w tools
 ```
@@ -170,6 +170,6 @@ sed -e "s#/home/scratch.thannan_wwfo/codec_reproduce#$WORK#g" -e "s#/home/thanna
 
 It has three layers: `permissions.deny` blocks the agent's file-edit tool on those folders, `sandbox.filesystem.denyWrite` blocks its shell commands from writing there, and `autoMode.hard_deny` lists the same rules in plain English so auto mode never approves them.
 
-**3. Sandbox.** Start the agent from `$WORK` (so it loads `.claude/`), turn on sandboxing with `/sandbox`, and give it the kit's `RUN_SESSION_PROMPT.md` as the task (swap in your paths with the same `sed`). It downloads the videos and runs steps 6–7, stops at the first failure, and never prints `HF_TOKEN`.
+**3. Sandbox.** Start the agent from `$WORK` (so it loads `.claude/`), turn on sandboxing with `/sandbox`, and give it `autogaze_lmms_eval/repro/RUN_SESSION_PROMPT.md` as the task (swap in your paths with the same `sed`). It downloads the videos and runs steps 6–7, stops at the first failure, and never prints `HF_TOKEN`.
 
 **More:** `AutoGaze/Codec_Selector_Feasibility.md` (original study), `autogaze_lmms_eval/EGOSCHEMA_HEADLINE.md` (launcher options), `LMMS_EVAL_BRIDGE.md` (bridge internals).
