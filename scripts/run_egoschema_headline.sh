@@ -112,7 +112,7 @@ fi
 [ "${#GPU_ARR[@]}" = "${#MODE_ARR[@]}" ] || die "--gpus has ${#GPU_ARR[@]} entries for ${#MODE_ARR[@]} modes"
 
 # ---- preflight -------------------------------------------------------------
-[ "$(uname -m)" = aarch64 ] || die "run this on a GB200 (aarch64) compute node, not $(uname -m)"
+case "$(uname -m)" in aarch64|x86_64) ;; *) die "run this on a GB200 (aarch64) or H100 (x86_64) node, not $(uname -m)" ;; esac
 [ -x "$CONDA_BASE/bin/conda" ] || die "no conda at $CONDA_BASE"
 [ -d "$REPO_DIR/scripts/breakdown" ] || die "no AutoGaze checkout at $REPO_DIR"
 [ -n "${HF_TOKEN:-}" ] || log "WARNING: HF_TOKEN is not set; lmms-lab/egoschema needs an authenticated download"
@@ -121,7 +121,7 @@ if [ "$MODEL" != nvila ]; then
   [ -d "$MC_ROOT/model_compat/adapters" ] || die "no model_compat in $MC_ROOT: check out AutoGaze commit 9899fd6 (branch pareto/main)"
   # model_compat's frame sampler loads dump_cu even for dense, and the MV selector
   # falls back to the HEVC path on intra-only windows.
-  native="$REPO_DIR/native/build_aarch64"
+  native="${MC_NATIVE_BUILD:-$REPO_DIR/native/build_$(uname -m)}"
   [ -x "$native/dump_cu" ] || die "$MODEL needs $native/dump_cu: build AutoGaze/native first (README step 4)"
   for m in "${MODE_ARR[@]}"; do
     case "$m" in
@@ -136,7 +136,7 @@ for m in "${MODE_ARR[@]}"; do
     codec|codec_nvdec|codec_geo|codec_ord)
       # Without these the codec selector silently falls back to slower paths
       # (or fails), so latency would not be comparable.
-      native="$REPO_DIR/native/build_aarch64"
+      native="${MC_NATIVE_BUILD:-$REPO_DIR/native/build_$(uname -m)}"
       [ -x "$native/dump_cu" ] || die "$m needs $native/dump_cu: build AutoGaze/native first (EGOSCHEMA_HEADLINE.md, prerequisites)"
       [ -f "$native/libcodec_raster.so" ] || die "$m needs $native/libcodec_raster.so: build AutoGaze/native first"
       ;;
