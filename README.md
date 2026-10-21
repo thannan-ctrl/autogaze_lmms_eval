@@ -222,117 +222,136 @@ The cross-check compares three measurements of each question's latency:
 
 ## 8. Qwen3.5-9B and Nemotron-3-Nano-Omni on H100
 
-`scripts/run_eval.sbatch` runs one model on lmms-eval's `egoschema_subset` (the same 500 questions as above) as one Slurm job on one 80 GB H100. It serves the model through AutoGaze's `model_compat` adapters, the code behind `AutoGaze/RESULTS_LATENCY_ACCURACY.md`. These adapters are read from the `AutoGaze` checkout (commit `9899fd6`) and never edited.
+### What this tests
 
-**What a job does.** Everything is fixed inside the script; the only inputs are `--model`, `--dataset egoschema`, an optional `--smoke-only`, and a new tag.
-1. **Preflight**, written to `runs/<tag>/preflight.txt`. It stops the job before any GPU work if a check fails:
-   - x86_64 node with an 80 GB H100;
-   - `HF_TOKEN` set;
-   - AutoGaze at `9899fd6` and lmms-eval at `d6cc2b5`, with no code changes (`.claude/` and `.vscode/` are ignored);
-   - native `dump_cu`, weights and the EgoSchema videos present;
-   - both envs import their kernels and see CUDA;
-   - the warm-up video is not one of the 500.
-2. **Smoke**: 8 questions per arm, then a gate. Every arm must read `timing ok, client log ok, e2e cross-check ok, replies ok`, or the job stops.
-3. **Full**: 500 questions per arm.
-4. `scripts/summarize_suite.py` writes `runs/<tag>/SUMMARY.md`, then `SHA256SUMS`, and the whole `runs/<tag>/` is made read-only.
+A video question-answering model normally looks at every small square ("patch") of every frame it samples. Each patch becomes a *visual token* the model has to read, so more patches means slower answers.
 
-The arms run one after another in the same job on the same GPU, as in the reference, so dense and hybrid are compared on the same host. The partition's nodes have one GPU each, so the two models' jobs run in parallel on different nodes.
+Video files already record which parts of the picture move: compression stores *motion vectors* so it doesn't have to save unchanged areas twice. The **codec** method reuses that free information to keep only the patches that change. The model reads far fewer tokens and answers sooner.
 
-| Model | `--model` | Frames | Arms | Weights |
-|---|---|--:|---|---|
-| Qwen3.5-9B | `qwen3_5` | 128 | `dense`, `codec_mv_hybrid` | HF snapshot `c2022362…` in `$HF_HOME` |
-| Nemotron-3-Nano-Omni-30B-A3B | `nemotron_omni` | 64 (675 patches, EgoSchema's native 480×360) | `dense`, `codec_mv_hybrid` | `model_compat/weights/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16`, the reference's copy |
+The question here is whether accuracy holds up when an independent benchmark asks the questions and grades the answers. We test two recent models, each in two settings:
 
-`codec_mv_hybrid` is the reference's recommended strict-L1 point, `codec@first=1.0@chunk=16@rest=0.25`:
-- the H.264 motion-vector selector chooses the patches, with no re-encode;
-- the first frame pair of every 16 frames keeps all patches;
-- the rest keep the top 25%.
+| Setting | What the model sees |
+|---|---|
+| **dense** | every patch of every sampled frame (the baseline) |
+| **codec (hybrid)** | every patch of one frame pair in every 16 frames, and in all other frames only the 25% of patches with the most motion |
 
-The other `mc_backend.py` modes (`codec_mv`, `codec_mv_keep`) still work through the launcher, but the job doesn't run them.
+- **Qwen3.5-9B** samples 128 frames per video.
+- **Nemotron-3-Nano-Omni-30B-A3B** samples 64 frames at the videos' native 480×360 resolution.
 
-**Setup it uses** (the reference's own, so nothing is installed):
-- server env `$CONDA_BASE/envs/nemo-omni` (x86_64; torch 2.12.0+cu132, transformers 5.5.0, av 17.0.1);
-- Qwen kernels from `model_compat/pylibs/fla` (vendored `fla` 0.5.2), plus `causal_conv1d` in the env;
-- client env `lmms-eval-bridge`, an editable install of this repo's `lmms-eval/` and `autogaze_lmms_eval/`;
-- native selector build `model_compat/native_build_x86_64`;
-- Slurm partition `H100_80G_HBM3_SXM_AMD_preprod`, `--gres=gpu:H100:1,gpu_memory:80G` (one node of that partition has a 64 GB GPU), 4 h limit;
-- every `MC_*` and `PYTHON*` variable from the caller's environment is cleared, and the pareto "best" settings are applied (`mc_backend.py`).
+The test set is **EgoSchema**: 500 multiple-choice questions about 3-minute first-person videos, with five options each, so guessing scores 20%. **lmms-eval**, a standard open-source benchmark tool, asks every question and grades every answer. The bridge connects it to the models without changing either.
 
-**Run**, from a login node that can submit to that partition:
+### Results
+
+500 questions, one NVIDIA H100 80 GB per model, dense and codec measured on the same machine.
+
+| Model | Setting | Accuracy | Visual tokens per question | Seconds per question |
+|---|---|--:|--:|--:|
+| Qwen3.5-9B | dense | _pending_ | _pending_ | _pending_ |
+| Qwen3.5-9B | codec (hybrid) | _pending_ | _pending_ | _pending_ |
+| Nemotron-3-Nano-Omni | dense | _pending_ | _pending_ | _pending_ |
+| Nemotron-3-Nano-Omni | codec (hybrid) | _pending_ | _pending_ | _pending_ |
+
+How to read it:
+- **Accuracy:** one standard error is about 2 points on 500 questions, so differences under about 4 points are within noise.
+- **Seconds per question:** the full answer time, covering video decoding, choosing patches, and the model's own work.
+- **Reference:** the same models and settings measured earlier with the study's own scripts (`AutoGaze/RESULTS_LATENCY_ACCURACY.md`, also on H100):
+
+  | Model | Setting | Accuracy | Visual tokens | Seconds |
+  |---|---|--:|--:|--:|
+  | Qwen3.5-9B | dense | 72.8% | 11,225 | 1.14 |
+  | Qwen3.5-9B | codec (hybrid) | 69.4% | 3,847 | 0.81 |
+  | Nemotron-3-Nano-Omni | dense | 64.0% | 5,216 | 0.66 |
+  | Nemotron-3-Nano-Omni | codec (hybrid) | 59.8% | 1,786 | 0.52 |
+
+  Small differences from the reference are expected, because lmms-eval asks the question in its own words and grades answers its own way.
+
+### Reproduce it
+
+**You need:**
+
+| What | Where it comes from |
+|---|---|
+| A Slurm partition with an 80 GB H100, x86_64 | here: `H100_80G_HBM3_SXM_AMD_preprod` |
+| This repo, `AutoGaze` at `9899fd6` and `lmms-eval` at `d6cc2b5`, side by side in `$WORK` | step 2 |
+| The EgoSchema videos in `$HF_HOME/egoschema/videos`, and a Hugging Face token that accepted the `lmms-lab/egoschema` terms | step 5 |
+| Qwen3.5-9B weights, revision `c202236235762e1c871ad0ccb60c8ee5ba337b9a` | step 5 (`hf download`) |
+| Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16 weights | step 5 (`hf download`, revision `e5e9932…`), plus `nvidia/C-RADIOv4-H` |
+| **Model env**, Python 3.10 | `conda create -n nemo-omni python=3.10`, then `pip install --extra-index-url https://download.pytorch.org/whl/cu132 -r AutoGaze/model_compat/envs_nemo-omni.freeze.txt` (torch 2.12.0+cu132, transformers 5.5.0, av 17.0.1). First delete the freeze file's `-e git+ssh://…automodel-omni…` line: it's an internal package these models don't use. `causal_conv1d` and `mamba_ssm` compile on install and need `nvcc`. |
+| Qwen's fast kernels | `pip install --no-deps --target <dir> flash-linear-attention==0.5.2 fla-core==0.5.2` |
+| **Benchmark env**, Python 3.11 | as the `lmms-eval` env in step 3, built on an x86_64 machine |
+| The codec tools for x86_64 (`dump_cu`) | In `AutoGaze` on an x86_64 node: `cmake -S native -B native/build_x86_64 -DCMAKE_BUILD_TYPE=Release && cmake --build native/build_x86_64 -j 16 --target dump_stats dump_cu`. This needs the `scripts/hevc_dump` submodule from step 2; `tools/build_autogaze_native.sh` only builds on aarch64. |
+
+All of these already exist on Thannan's scratch. Every path the job uses is set in the first block of `scripts/run_eval.sbatch` (`CONDA_BASE`, `SERVER_ENV`, `CLIENT_ENV`, `HF_HOME`, `MC_NATIVE_BUILD`, `MC_FLA`, the weight paths, the partition). Change those lines if yours differ.
+
+**Run** both models; each is one Slurm job of about 40 minutes plus queue time:
 
 ```bash
-mkdir -p $WORK/runs/_slurm   # once; Slurm writes run_eval_<jobid>.log here
+mkdir -p $WORK/runs/_slurm
 D=$(date +%Y%m%d_%H%M)
 sbatch $WORK/autogaze_lmms_eval/scripts/run_eval.sbatch --model qwen3_5 --dataset egoschema qwen3_5_egoschema_$D
 sbatch $WORK/autogaze_lmms_eval/scripts/run_eval.sbatch --model nemotron_omni --dataset egoschema nemotron_omni_egoschema_$D
 ```
 
-Add `--smoke-only` to stop after the gate (about 10 min). Smoke jobs 2730776 (Qwen) and 2730927 (Omni) passed every check. Each full job loads its model four times (smoke and full, two arms each):
+**Read the result** in `runs/<tag>/SUMMARY.md`. A job that worked ends its log (`runs/_slurm/run_eval_<jobid>.log`) with `[run_eval] … done`, and exits 0.
 
-| | Qwen3.5 | Omni |
-|---|---|---|
-| model load | ~2.5 min | ~5.5 min first time, ~1.5 min after |
-| full job | ~40 min | ~35 min |
+### Hand it to an agent
 
-Queue time is extra. The job exits 0 only if every step passed; a failed full-run arm still gets a `SUMMARY.md` but the job exits 1.
-
-**Hand it to an agent.** The agent submits both jobs, watches them and reports back. It can't change code, envs, data or results, and it can't read the result files. Its rules are the three guardrails at the top ("Optional: let an AI agent run it").
-1. **Once:** install the rules (guardrail 2) and create `runs/_slurm/` (the `mkdir` above).
-2. **Start the session** in a terminal on a login node that can submit to the H100 partition. Use your own token; the agent never prints it:
+An agent such as Claude Code can submit and watch both jobs. It can't change code, environments, data or results, or read the result files.
+1. Install its rules once (guardrail 2 in "Optional: let an AI agent run it").
+2. Start it from a login node that can submit to the H100 partition:
    ```bash
    export HF_TOKEN=hf_...
    cd $WORK && claude --settings $WORK/.claude/settings.local.json
    ```
-   `--settings` is what lets the agent reach Slurm (guardrail 3).
-3. **Check the session**: ask it to run `squeue -u $USER`. It should print your queue. If it fails with `Invalid user` or `Unable to contact slurm controller`, the session started without `--settings`; restart it with the flag.
-4. **Give it the task**:
-   ```text
-   follow $WORK/RUN_SESSION_PROMPT.md
-   ```
-   (`autogaze_lmms_eval/repro/RUN_SESSION_PROMPT.md` is the same file). It then:
-   - submits one `sbatch …/run_eval.sbatch --model … --dataset egoschema <tag>` per model, with new dated tags;
-   - watches with `squeue`/`sacct` and the logs, no more often than every 5 minutes;
-   - resubmits a job once under a new tag if the failure looks transient (node failure, timeout, out of memory at load);
-   - for anything else, it stops and tells you what failed. It never tries a fix.
-5. **Its report** has, per job: tag, job id, the exact `sbatch` command, final state and exit code, `preflight.txt`, the path of `SUMMARY.md`, and the log lines of anything that failed. It contains no result numbers.
-6. **Read `runs/<tag>/SUMMARY.md` yourself.** It's read-only, like everything the job wrote.
+   `--settings` lets it reach Slurm when your organization's settings would otherwise block that.
+3. Ask it to run `squeue -u $USER`. If that fails, it was started without `--settings`.
+4. Tell it: `follow $WORK/RUN_SESSION_PROMPT.md`.
 
-The first agent run (jobs 2731219 and 2731222) followed exactly this.
+It submits both jobs, watches them, and resubmits once if a job dies for a passing reason such as a node failure. It reports the tags, job states and file paths, never the numbers; you read `SUMMARY.md` yourself.
 
-**Where things are.**
+<details>
+<summary><b>Details: how a run works and what it checks</b></summary>
+
+**One job, step by step.** `scripts/run_eval.sbatch` fixes everything itself; its only inputs are `--model`, `--dataset egoschema`, an optional `--smoke-only`, and a new tag.
+1. **Preflight** (`runs/<tag>/preflight.txt`): stops before using the GPU unless all of these hold:
+   - the code is at the pinned commits;
+   - envs, kernels, weights and videos are present;
+   - an 80 GB H100 is visible;
+   - `HF_TOKEN` is set;
+   - the warm-up video is not one of the 500.
+2. **Smoke test:** 8 questions per setting, then a gate. Each setting must log its timings and give letter answers, and its timings must pass the cross-check below. Otherwise the job stops.
+3. **Full run:** 500 questions per setting, one setting after the other on the same GPU.
+4. **Summary:** `SUMMARY.md`, checksums (`SHA256SUMS`), then the whole `runs/<tag>/` is made read-only.
+
+**Setup**, the same as the reference study:
+- model env `nemo-omni` (torch 2.12.0+cu132, transformers 5.5.0, av 17.0.1);
+- Qwen's kernels from the `fla` folder;
+- the reference's x86_64 codec build and Omni weights (paths at the top of the job script);
+- the pareto "best" codec settings (`autogaze_lmms_eval/mc_backend.py`), with any `MC_*` or `PYTHON*` variable from your shell cleared first.
+
+**Output** in `runs/<tag>/`:
 
 | Path | What |
 |---|---|
-| `runs/_slurm/run_eval_<jobid>.log` | job log: preflight, one `[run_eval]` line per step, `[status]` lines, no result numbers |
-| `runs/<tag>/preflight.txt` | every preflight check and the env versions |
-| `runs/<tag>/{smoke,full}/<arm>/` | one launcher run per arm: `run_info.txt`, `RESULTS.md`, lmms-eval output `lmms_<arm>/`, `timing_<arm>.jsonl`, `client_timing_<arm>.jsonl`, `logs/`, `SHA256SUMS` |
-| `runs/<tag>/SUMMARY.md` | both stages: accuracy, tokens, latency breakdown, e2e cross-check, unparsed replies, and the reference values |
+| `SUMMARY.md` | final numbers for both settings, the timing cross-check, unparsed replies, and the reference values |
+| `preflight.txt` | every preflight check and the env versions |
+| `{smoke,full}/<setting>/` | the run of one setting: lmms-eval's results and per-question answers, per-question timings, logs, checksums |
 
-**Reference values** (`AutoGaze/RESULTS_LATENCY_ACCURACY.md`, H100 SXM, same 500 questions):
+**Differences from the reference** (why the numbers can differ a little):
+- **Prompt:** lmms-eval's EgoSchema prompt instead of the study's own.
+- **Answer length:** up to 16 tokens instead of 8.
+- **Unclear replies:** lmms-eval guesses a random letter when a reply contains none, where the study counted it wrong. `SUMMARY.md` counts these as "No letter".
+- **Latency:** each setting starts its own model server, while the study ran both in one process.
 
-| Model | Arm | Accuracy | Sec/question | Visual tokens |
-|---|---|--:|--:|--:|
-| Qwen3.5, 128f | dense | 72.8% | 1.14 | 11,225 |
-| Qwen3.5, 128f | codec_mv_hybrid | 69.4% | 0.81 | 3,847 |
-| Omni, 64f | dense | 64.0% | 0.66 | 5,216 |
-| Omni, 64f | codec_mv_hybrid | 59.8% | 0.52 | 1,786 |
+**Timing cross-check.** Three clocks time every question:
+- the model code's own timer, which gives the reported seconds;
+- the bridge's clock around each answer;
+- lmms-eval's clock around each request.
 
-One standard error is about 2 points. Expect differences, because lmms-eval is the judge here:
-- **Prompt:** lmms-eval's EgoSchema prompt instead of model_compat's "Question: … Answer with the letter of the correct option only."
-- **Answer length:** up to 16 new tokens instead of 8.
-- **Parser:** lmms-eval's. It picks a random letter when a reply has none, where model_compat counted those as wrong. `SUMMARY.md` counts such replies per arm under "No letter".
-- **Latency:** the reference timed all arms in one process, and this run starts a fresh server per arm.
+They must agree within 5% (or 50 ms). The model code deliberately leaves two steps out of its timer, as the reference did: reading the video from disk beforehand, and clearing a temporary cache afterwards. The bridge times those two separately and allows for them ("Untimed by design"). Any other difference fails the check.
 
-`SUMMARY.md` shows the reference next to each arm for information only; there is no pass/fail on accuracy or latency.
+**GB200.** The step 7 launcher also accepts `--model qwen3_5|nemotron_omni` with the `autogaze_mc` env from step 3, but no GB200 run of these models has got past server startup. Use the H100 job. If you try it anyway, don't set `MC_PYTHONPATH` to the env's own site-packages, which breaks `import torch`.
 
-**E2E cross-check for these models.** model_compat leaves two steps out of its `e2e_ms` on purpose, as its own runner does: reading the video into the page cache before each question, and clearing the per-question codec cache after it. The bridge times both (`preread_ms`, `cleanup_ms`) and takes only those out of the bridge-clock gap, shown as *Untimed by design* in the cross-check table. Any other gap still fails the check.
-
-**GB200 (untested).** The launcher still accepts `--model qwen3_5|nemotron_omni` with `SERVER_ENV=autogaze_mc` (step 3), for example:
-
-```bash
-$L --model qwen3_5 --model-path $QWEN --nvf 128 --modes "dense codec_mv_hybrid" --warmup-video $W <tag>
-```
-
-No GB200 run of these models has got past server startup, so treat the H100 job as the supported path. The earlier attempts set `MC_PYTHONPATH` to the env's own site-packages, which breaks `import torch`; don't set it.
+</details>
 
 **More:** `AutoGaze/Codec_Selector_Feasibility.md` (original study), `autogaze_lmms_eval/EGOSCHEMA_HEADLINE.md` (launcher options), `LMMS_EVAL_BRIDGE.md` (bridge internals).
