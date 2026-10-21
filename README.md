@@ -276,6 +276,29 @@ Add `--smoke-only` to stop after the gate (about 10 min). Smoke jobs 2730776 (Qw
 
 Queue time is extra. The job exits 0 only if every step passed; a failed full-run arm still gets a `SUMMARY.md` but the job exits 1.
 
+**Hand it to an agent.** The agent submits both jobs, watches them and reports back. It can't change code, envs, data or results, and it can't read the result files. Its rules are the three guardrails at the top ("Optional: let an AI agent run it").
+1. **Once:** install the rules (guardrail 2) and create `runs/_slurm/` (the `mkdir` above).
+2. **Start the session** in a terminal on a login node that can submit to the H100 partition. Use your own token; the agent never prints it:
+   ```bash
+   export HF_TOKEN=hf_...
+   cd $WORK && claude --settings $WORK/.claude/settings.local.json
+   ```
+   `--settings` is what lets the agent reach Slurm (guardrail 3).
+3. **Check the session**: ask it to run `squeue -u $USER`. It should print your queue. If it fails with `Invalid user` or `Unable to contact slurm controller`, the session started without `--settings`; restart it with the flag.
+4. **Give it the task**:
+   ```text
+   follow $WORK/RUN_SESSION_PROMPT.md
+   ```
+   (`autogaze_lmms_eval/repro/RUN_SESSION_PROMPT.md` is the same file). It then:
+   - submits one `sbatch …/run_eval.sbatch --model … --dataset egoschema <tag>` per model, with new dated tags;
+   - watches with `squeue`/`sacct` and the logs, no more often than every 5 minutes;
+   - resubmits a job once under a new tag if the failure looks transient (node failure, timeout, out of memory at load);
+   - for anything else, it stops and tells you what failed. It never tries a fix.
+5. **Its report** has, per job: tag, job id, the exact `sbatch` command, final state and exit code, `preflight.txt`, the path of `SUMMARY.md`, and the log lines of anything that failed. It contains no result numbers.
+6. **Read `runs/<tag>/SUMMARY.md` yourself.** It's read-only, like everything the job wrote.
+
+The first agent run (jobs 2731219 and 2731222) followed exactly this.
+
 **Where things are.**
 
 | Path | What |
