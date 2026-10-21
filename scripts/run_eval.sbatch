@@ -96,8 +96,11 @@ inenv() { bash -c 'eval "$("$0"/bin/conda shell.bash hook)" && conda activate "$
   chk "HF_TOKEN set"         test -n "${HF_TOKEN:-}"
   chk "AutoGaze at pin"      test "$(git -C "$WORK/AutoGaze" rev-parse HEAD)" = "$PIN_AUTOGAZE"
   chk "lmms-eval at pin"     test "$(git -C "$WORK/lmms-eval" rev-parse HEAD)" = "$PIN_LMMS_EVAL"
-  chk "AutoGaze clean"       test -z "$(git -C "$WORK/AutoGaze" status --porcelain --untracked-files=no)"
-  chk "lmms-eval clean"      test -z "$(git -C "$WORK/lmms-eval" status --porcelain --untracked-files=no)"
+  # Code must match the pins; editor/agent config folders (.claude/, .vscode/) don't count, but are recorded.
+  for r in AutoGaze lmms-eval; do
+    echo "git_status_$r=$(git -C "$WORK/$r" status --porcelain --untracked-files=no | tr '\n' ';')"
+    chk "$r code clean" test -z "$(git -C "$WORK/$r" status --porcelain --untracked-files=no -- . ':!.claude' ':!.vscode')"
+  done
   chk "native dump_cu"       test -x "$MC_NATIVE_BUILD/dump_cu"
   chk "weights"              test -f "$MODEL_PATH/config.json"
   chk "egoschema videos"     bash -c "[ \$(ls '$HF_HOME/egoschema/videos' | wc -l) -ge 5000 ]"
