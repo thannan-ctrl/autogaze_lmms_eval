@@ -29,19 +29,19 @@ We use it to reproduce the EgoSchema "Headline result" of `AutoGaze/Codec_Select
 
 Skip this section to run everything by hand.
 
-Do steps 1–4 and the `hf download` lines of step 5 yourself (installs, the codec-tool build and writes to `$HF_HOME` are off-limits to the agent), then hand the rest to an agent such as Claude Code. Three guardrails keep it from changing anything that would invalidate the result:
+Do steps 1–5 yourself, including the step 8 env and downloads and the video download (installs, the codec-tool build and writes to `$HF_HOME` are off-limits to the agent), then hand the rest to an agent such as Claude Code. Three guardrails keep it from changing anything that would invalidate the result:
 
 **1. Folder permissions.** Make the inputs read-only at the OS level:
 
 ```bash
-chmod -R a-w AutoGaze lmms-eval autogaze_lmms_eval tools envs reference
+chmod -R a-w AutoGaze lmms-eval autogaze_lmms_eval tools envs reference LMMS_EVAL_BRIDGE.md
 ```
 
 | Folder | Agent may |
 |---|---|
 | `AutoGaze/`, `lmms-eval/`, `autogaze_lmms_eval/`, `tools/` | read and run scripts; never edit, rebuild, `pip install` or change git state |
 | `$HF_HOME`, `$CONDA_BASE` | read only; only the launcher's download writes data |
-| `runs/` | read only; only the launcher, `verify_alignment.sh` and lmms-eval write there |
+| `runs/` | read only; only the launcher, `verify_alignment.sh` and lmms-eval write there, and each finished run is made read-only |
 | `.claude/` | nothing: these are the agent's own rules |
 
 **2. Claude Code settings.** Install the rules from `repro/claude_settings.local.json` with your paths:
@@ -56,7 +56,7 @@ sed -e "s#/home/scratch.thannan_wwfo/codec_reproduce#$WORK#g" -e "s#/home/thanna
 
 It has three layers: `permissions.deny` blocks the agent's file-edit tool on those folders, `sandbox.filesystem.denyWrite` blocks its shell commands from writing there, and `autoMode.hard_deny` lists the same rules in plain English so auto mode never approves them.
 
-**3. Sandbox.** Start the agent from `$WORK` (so it loads `.claude/`), turn on sandboxing with `/sandbox`, and give it `autogaze_lmms_eval/repro/RUN_SESSION_PROMPT.md` as the task (swap in your paths with the same `sed`). It downloads the videos and runs steps 6–7, stops at the first failure, and never prints `HF_TOKEN`.
+**3. Sandbox.** Start the agent from `$WORK` (so it loads `.claude/`), turn on sandboxing with `/sandbox`, and give it `autogaze_lmms_eval/repro/RUN_SESSION_PROMPT.md` as the task (swap in your paths with the same `sed`). It runs steps 6–8 (NVILA, Qwen3.5, Omni; smoke then full), stops at the first failure and never prints `HF_TOKEN`. It does not report results: it gives back only tags, commands, exit codes and the paths of the `RESULTS.md` files the launcher wrote. Its rules deny it edits anywhere in `$WORK`, `$HF_HOME`, `$CONDA_BASE` and the model_compat dirs.
 
 ## You need
 
@@ -183,7 +183,7 @@ ls $HF_HOME/egoschema/videos | wc -l   # expect 5032
 tools/verify_alignment.sh dense autogaze codec       # expect PASS for each
 R=egoschema_smoke_$(date +%Y%m%d_%H%M)
 $L --limit 8 --modes "dense autogaze codec" --warmup-video $W $R   # ~10 min
-python $T runs/$R dense autogaze codec
+cat runs/$R/RESULTS.md                              # written by the launcher
 python reference/compare_tokens.py runs/$R reference
 #   expect 0 mismatches; mean tokens 25,927 / 1,980 / 2,903 (dense / autogaze / codec)
 ```
@@ -193,11 +193,20 @@ python reference/compare_tokens.py runs/$R reference
 ```bash
 R=egoschema_headline_$(date +%Y%m%d)    # every run needs a new name
 $L --modes "dense autogaze codec" --warmup-video $W $R   # ~1 h; logs in runs/$R/logs/
-python $T runs/$R dense autogaze codec                   # accuracy + timing, compare with Expected result
+cat runs/$R/RESULTS.md                                   # accuracy + timing, compare with Expected result
 python reference/compare_tokens.py runs/$R reference     # expect 500 questions, 0 mismatches
 ```
 
 Always pass `--modes`: the default adds `codec_nvdec`, which needs a newer driver.
+
+**What every run writes.** At the end the launcher runs `headline_table.py` itself and writes `runs/$R/RESULTS.md`. That file has accuracy, the latency breakdown (preproc, selector, ViT, LLM, E2E) and an **end-to-end cross-check**. It also writes `SHA256SUMS` and makes `runs/$R/` read-only. The terminal shows only pass/fail `[status]` lines.
+
+The cross-check compares three measurements of each question's latency:
+- the repo's own `e2e_ms` (AutoGaze or model_compat timers);
+- the bridge server's clock around each answer (`bridge_server_ms` in `timing_<mode>.jsonl`);
+- the lmms-eval client's clock around each HTTP request (`client_timing_<mode>.jsonl`).
+
+`Check` reads `ok` when the bridge clock agrees with the reported E2E within max(5%, 50 ms) on average. Otherwise it shows how much more the bridge measured, which is time the repo's timer leaves out. `python $T runs/$R <modes>` prints the same table again.
 
 ## 8. Other models: Qwen3.5-9B and Nemotron-3-Nano-Omni-30B-A3B
 
@@ -219,12 +228,12 @@ export MC_PYTHONPATH=$CONDA_BASE/envs/autogaze_mc/lib/python3.12/site-packages  
 R=qwen35_smoke_$(date +%Y%m%d_%H%M)
 SERVER_ENV=autogaze_mc $L --model qwen3_5 --model-path $QWEN --nvf 128 --limit 8 \
     --modes "dense codec_mv codec_mv_hybrid" --warmup-video $W $R            # ~15 min
-python $T runs/$R dense codec_mv codec_mv_hybrid
+cat runs/$R/RESULTS.md
 
 R=omni_smoke_$(date +%Y%m%d_%H%M)
 SERVER_ENV=autogaze_mc $L --model nemotron_omni --model-path $OMNI --nvf 64 --limit 8 \
     --modes "dense codec_mv codec_mv_hybrid" --warmup-video $W $R
-python $T runs/$R dense codec_mv codec_mv_hybrid
+cat runs/$R/RESULTS.md
 ```
 
 Drop `--limit 8` (and use a new name) for the full 500 questions.

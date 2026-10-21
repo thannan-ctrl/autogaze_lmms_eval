@@ -247,12 +247,18 @@ def make_handler(runner):  # AutoGazeRunner or mc_backend.MCRunner
                 return
             try:
                 req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+                # The bridge's own clock around the whole answer (all model-side
+                # work, untimed file reads included), independent of the timers in
+                # AutoGaze / model_compat that fill out["timing"]["e2e_ms"].
+                # generate() returns decoded text, so the GPU work has finished.
+                t0 = time.perf_counter()
                 out = runner.generate(
                     video_path=req["video_path"],
                     prompt=req["prompt"],
                     max_new_tokens=int(req.get("max_new_tokens", 16)),
                     do_sample=bool(req.get("do_sample", False)),
                 )
+                out["timing"]["bridge_server_ms"] = (time.perf_counter() - t0) * 1000
                 runner.log(req, out)
                 self._send(200, out)
             except Exception as e:

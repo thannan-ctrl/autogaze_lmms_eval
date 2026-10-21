@@ -6,6 +6,13 @@ Usage: python headline_table.py <runs/<tag>> [mode ...]
 Accuracy comes from lmms-eval's logged samples (score.pred == score.ground_truth,
 as egoschema_aggregate_score computes it). Timing comes from the server's
 per-request log (timing_<mode>.jsonl), joined to the samples on meta.doc_id.
+
+End-to-end cross-check: the reported e2e_ms comes from AutoGaze's (or
+model_compat's) own timers. The bridge measures the same questions twice with
+its own clocks: bridge_server_ms (server.py, around each answer) and
+client_roundtrip_ms (client.py inside lmms-eval, around each HTTP request,
+client_timing_<mode>.jsonl). A reported E2E well below the bridge's numbers
+means the repo's timer leaves work out.
 Stdlib only, so it runs in either env.
 """
 import argparse
@@ -63,6 +70,26 @@ def load_timing(run_dir, mode):
     return rows
 
 
+def load_client(run_dir, mode):
+    path = os.path.join(run_dir, f"client_timing_{mode}.jsonl")
+    if not os.path.exists(path):
+        return None
+    rows = {}
+    for line in open(path):
+        r = json.loads(line)
+        if r["meta"].get("task") != TASK:
+            continue
+        if r["meta"]["doc_id"] in rows:
+            sys.exit(f"{mode}: duplicate doc_id {r['meta']['doc_id']} in {path}")
+        rows[r["meta"]["doc_id"]] = r["client_roundtrip_ms"]
+    return rows
+
+
+def pctl(xs, q):
+    xs = sorted(xs)
+    return xs[min(len(xs) - 1, int(round(q * (len(xs) - 1))))]
+
+
 def reply_of(sample):
     resp = sample.get("filtered_resps")
     while isinstance(resp, list):
@@ -78,7 +105,7 @@ def has_letter(reply):
     return bool(re.search(r"\([A-E]\)|[A-E] |[A-E]\.", r))
 
 
-def summarize(mode, samples, timing):
+def summarize(mode, samples, timing, client=None):
     n = len(samples)
     correct = sum(str(s["score"]["pred"]) == str(s["score"]["ground_truth"]) for s in samples.values())
     replies = [reply_of(s) for s in samples.values()]
@@ -118,7 +145,34 @@ def summarize(mode, samples, timing):
         seen.add(r["num_tokens"])
     out["prefill_steady"] = (statistics.median(steady) / 1000, len(steady)) if steady else None
     out["prefill_first"] = (statistics.median(first) / 1000, len(first)) if first else None
+
+    # End-to-end cross-check against the bridge's own clocks.
+    out["parts"] = out["preproc"] + out["vit"] + out["llm"]
+    if all(r.get("bridge_server_ms") is not None for r in rows):
+        gap = [r["bridge_server_ms"] - r["e2e_ms"] for r in rows]
+        out.update(server=mean("bridge_server_ms") / 1000, gap_mean=statistics.fmean(gap) / 1000,
+                   gap_p95=pctl(gap, 0.95) / 1000)
+    if client is not None:
+        missing = sorted(set(timing) - set(client))
+        if missing:
+            sys.exit(f"{mode}: client timing log lacks {len(missing)} questions, e.g. doc_id {missing[:5]}")
+        out["client"] = statistics.fmean(client[d] for d in timing) / 1000
     return out
+
+
+def fmt_s(x):
+    return "—" if x is None else f"{x:.2f} s"
+
+
+def e2e_check(d):
+    """ok when the bridge's server clock agrees with the reported E2E within
+    max(5%, 50 ms) on average; otherwise how far apart they are."""
+    if d.get("server") is None:
+        return "no bridge clock in this run"
+    tol = max(0.05 * d["e2e"], 0.05)
+    if abs(d["gap_mean"]) <= tol:
+        return "ok"
+    return f"**bridge clock {100 * d['gap_mean'] / d['e2e']:+.0f}% vs reported E2E**"
 
 
 def fmt_selector(d):
@@ -141,7 +195,7 @@ def main():
         if samples is None:
             print(f"[{mode}] no {TASK} samples file under {args.run_dir}/lmms_{mode}, skipped", file=sys.stderr)
             continue
-        results[mode] = summarize(mode, samples, load_timing(args.run_dir, mode))
+        results[mode] = summarize(mode, samples, load_timing(args.run_dir, mode), load_client(args.run_dir, mode))
     if not results:
         sys.exit("nothing to summarize")
 
@@ -163,6 +217,19 @@ def main():
         else:
             print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | (no timing log) | | | | | |")
 
+    print("\n**End-to-end latency cross-check.** Mean seconds per question. *Reported*: `e2e_ms` from the "
+          "repo's own timers (the E2E column above). *Sum of parts*: preproc + ViT + LLM as reported. "
+          "*Bridge server*: the bridge server's clock around each answer (includes untimed file reads). "
+          "*Client*: lmms-eval's side of each HTTP request, so also JSON and HTTP overhead. "
+          "*Gap*: bridge server − reported, per question.\n")
+    print("| Mode | Reported E2E | Sum of parts | Bridge server | Client round trip | Gap mean | Gap p95 | Check |")
+    print("|---|--:|--:|--:|--:|--:|--:|---|")
+    for mode, d in results.items():
+        if "e2e" not in d:
+            continue
+        print(f"| {mode} | {d['e2e']:.2f} s | {d['parts']:.2f} s | {fmt_s(d.get('server'))} | {fmt_s(d.get('client'))} "
+              f"| {fmt_s(d.get('gap_mean'))} | {fmt_s(d.get('gap_p95'))} | {e2e_check(d)} |")
+
     if model == "nvila":
         print("\n**Headline** (AutoGaze harness, `Codec_Selector_Feasibility.md`), and the difference (this run − headline).\n")
         print("| Mode | Accuracy | Tokens | Preproc | of which selector | ViT | LLM | **E2E** | ΔAcc (pts) | ΔE2E |")
@@ -177,6 +244,19 @@ def main():
         d_e2e = f"{d['e2e'] - h['e2e']:+.2f} s" if "e2e" in d else ""
         print(f"| {mode} | {h['acc']:.1f}% | {h['tokens']:,} | {h['preproc']:.2f} s | {fmt_selector(h)} | {h['vit']:.2f} s "
               f"| {h['llm']:.2f} s | **{h['e2e']:.2f} s** | {d['acc'] - h['acc']:+.1f} | {d_e2e} |")
+
+    # Pass/fail per mode on stderr, without numbers, for whoever runs the
+    # launcher (the numbers stay in the results file).
+    for mode in args.modes:
+        d = results.get(mode)
+        if d is None:
+            print(f"[status] {mode}: MISSING (no samples)", file=sys.stderr)
+            continue
+        checks = ["timing ok" if "e2e" in d else "NO TIMING LOG",
+                  "client log ok" if d.get("client") is not None else "NO CLIENT TIMING LOG",
+                  "e2e cross-check ok" if e2e_check(d) == "ok" else "E2E CROSS-CHECK MISMATCH",
+                  "replies ok" if d["no_letter"] <= d["n"] / 2 else "MOST REPLIES HAVE NO LETTER"]
+        print(f"[status] {mode}: " + ", ".join(checks), file=sys.stderr)
 
     print("\n**Replies and prefill.** *No letter*: replies where lmms-eval's parser finds no \"(A)\", \"A \" or \"A.\" "
           "and falls back to option-text matching or a random letter.\n")

@@ -8,9 +8,16 @@ Registered as `autogaze` through the `lmms_eval.models` entry point (see plugin.
 
 The server must run on the same filesystem, since requests carry the video's
 path, not its bytes (codec modes need the original file anyway).
+
+client_timing_log=<path> (optional model_arg) appends one JSON line per question
+with the wall time of the whole HTTP round trip, measured here with the client's
+own clock. It is independent of every timer in AutoGaze and in the server, so
+headline_table.py can cross-check the end-to-end latency those report.
 """
 import json
 import logging
+import os
+import time
 import urllib.error
 import urllib.request
 from typing import List, Tuple
@@ -26,12 +33,16 @@ eval_logger = logging.getLogger("lmms-eval")
 class AutoGaze(lmms):
     is_simple = True
 
-    def __init__(self, server_url: str = "http://127.0.0.1:8765", mode: str = None, timeout: float = 1800, **kwargs) -> None:
+    def __init__(self, server_url: str = "http://127.0.0.1:8765", mode: str = None, timeout: float = 1800,
+                 client_timing_log: str = None, **kwargs) -> None:
         super().__init__()
         if kwargs:
             eval_logger.warning(f"[autogaze] ignoring unknown model_args: {sorted(kwargs)}")
         self.server_url = server_url.rstrip("/")
         self.timeout = float(timeout)
+        self.client_timing_log = client_timing_log
+        if client_timing_log:
+            os.makedirs(os.path.dirname(os.path.abspath(client_timing_log)), exist_ok=True)
         self.server_info = self._request("GET", "/health")
         eval_logger.info(f"[autogaze] connected to {self.server_url}: {self.server_info}")
         # Optional guard so results are never logged under the wrong mode.
@@ -58,6 +69,8 @@ class AutoGaze(lmms):
                 raise ValueError(f"autogaze expects exactly one video path per question, got {visuals!r} ({task} doc {doc_id})")
             if gen_kwargs.get("temperature", 0) not in (0, 0.0, None):
                 eval_logger.warning(f"[autogaze] temperature={gen_kwargs['temperature']} ignored; decoding is greedy unless do_sample is set")
+            meta = {"task": task, "split": split, "doc_id": doc_id}
+            t0 = time.perf_counter()
             out = self._request("POST", "/generate", {
                 "video_path": visuals[0],
                 "prompt": contexts,
@@ -65,8 +78,13 @@ class AutoGaze(lmms):
                 "do_sample": bool(gen_kwargs.get("do_sample", False)),
                 # Logged next to the server's per-request timing, so it can be
                 # joined with lmms-eval's --log_samples output by (task, doc_id).
-                "meta": {"task": task, "split": split, "doc_id": doc_id},
+                "meta": meta,
             })
+            client_ms = (time.perf_counter() - t0) * 1000
+            if self.client_timing_log:
+                with open(self.client_timing_log, "a") as f:
+                    f.write(json.dumps({"time": time.time(), "mode": self.server_info["mode"], "meta": meta,
+                                        "client_roundtrip_ms": client_ms}) + "\n")
             text = out["text"]
             for stop in gen_kwargs.get("until", None) or []:
                 if stop:

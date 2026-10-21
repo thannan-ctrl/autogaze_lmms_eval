@@ -33,7 +33,9 @@
 # PYTHONPATH; default: model_compat's vendored fla kernels) and any MC_* override.
 #
 # Everything the run writes goes to <runs-dir>/<tag>/; nothing is written inside
-# this package or the AutoGaze checkout (codec caches included).
+# this package or the AutoGaze checkout (codec caches included). At the end the
+# launcher writes <tag>/RESULTS.md (headline_table.py: accuracy, latency
+# breakdown, end-to-end cross-check) and SHA256SUMS, then makes <tag>/ read-only.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -240,7 +242,8 @@ CLIENT_PIDS=()
 for i in "${!MODE_ARR[@]}"; do
   m=${MODE_ARR[$i]}
   port=$((BASE_PORT + i))
-  args=(-m lmms_eval --model autogaze --model_args "server_url=http://127.0.0.1:$port,mode=$m"
+  args=(-m lmms_eval --model autogaze
+        --model_args "server_url=http://127.0.0.1:$port,mode=$m,client_timing_log=$RUN_DIR/client_timing_$m.jsonl"
         --tasks "$TASK" --batch_size 1 --log_samples --output_path "$RUN_DIR/lmms_$m")
   [ -z "$LIMIT" ] || args+=(--limit "$LIMIT")
   log "starting lmms-eval for $m"
@@ -265,7 +268,22 @@ done
 
 if [ "$DOWNLOAD_ONLY" = 1 ]; then
   log "download finished: $(find "$EGO_DIR/videos" -name '*.mp4' 2>/dev/null | wc -l) videos in $EGO_DIR/videos"
-else
-  log "results in $RUN_DIR; summarize with: python $SCRIPT_DIR/headline_table.py $RUN_DIR"
+  exit "$failed"
 fi
+
+# The bridge writes the result table itself (accuracy, latency breakdown, and the
+# end-to-end cross-check against its own clocks), so nobody has to transcribe it.
+cleanup  # servers are done; stop them before writing the final files
+SERVER_PIDS=()
+"${IN_ENV[@]}" "$CLIENT_ENV" python "$SCRIPT_DIR/headline_table.py" "$RUN_DIR" "${MODE_ARR[@]}" \
+  > "$RUN_DIR/RESULTS.md" 2> "$RUN_DIR/logs/headline_table.log" \
+  || { log "headline_table.py failed (see $RUN_DIR/logs/headline_table.log)"; failed=1; }
+[ "$failed" = 0 ] || echo -e "\n**Run status: FAILED** (see logs/)." >> "$RUN_DIR/RESULTS.md"
+( cd "$RUN_DIR" && find . -path './cache_*' -prune -o -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum ) \
+  > "$RUN_DIR/SHA256SUMS"  # codec caches are left out (large, not results)
+# Results are final: make the run folder read-only.
+chmod -R a-w "$RUN_DIR"
+# Only pass/fail here; the numbers stay in RESULTS.md for the person reading results.
+cat "$RUN_DIR/logs/headline_table.log"
+log "results table: $RUN_DIR/RESULTS.md (run folder is now read-only; checksums in SHA256SUMS)"
 exit "$failed"
