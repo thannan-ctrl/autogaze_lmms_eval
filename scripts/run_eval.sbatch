@@ -153,6 +153,6 @@ inenv "$CLIENT_ENV" python "$PKG/scripts/summarize_suite.py" "$SUITE" > "$SUITE/
   || die "summarize_suite.py failed (see $SUITE/summary.log)"
 cat "$SUITE/summary.log"
 ( cd "$SUITE" && find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum
-  find smoke full -mindepth 2 -maxdepth 2 -name SHA256SUMS -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum ) > "$SUITE/SHA256SUMS"
+  find . -mindepth 3 -maxdepth 3 -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum ) > "$SUITE/SHA256SUMS"  # <stage>/<arm>/SHA256SUMS
 [ "$FAILED" = 0 ] || die "full run finished with failed arms; SUMMARY.md has what completed (see the [run_eval] lines above)"
 log "done: $SUITE/SUMMARY.md (read-only)"
