@@ -246,12 +246,12 @@ The test set is **EgoSchema**: 500 multiple-choice questions about 3-minute firs
 
 | Model | Setting | Accuracy | Visual tokens per question | Seconds per question |
 |---|---|--:|--:|--:|
-| Qwen3.5-9B | dense | 70.2% | _pending_ | 1.30 |
-| Qwen3.5-9B | codec (hybrid) | 65.8% | _pending_ | 1.00 (−23%) |
-| Nemotron-3-Nano-Omni | dense | 63.8% | _pending_ | 0.66 |
-| Nemotron-3-Nano-Omni | codec (hybrid) | 57.2% | _pending_ | 0.56 (−15%) |
+| Qwen3.5-9B | dense | 70.2% | 11,226 | 1.30 |
+| Qwen3.5-9B | codec (hybrid) | 65.8% | 3,847 (−66%) | 1.00 (−23%) |
+| Nemotron-3-Nano-Omni | dense | 63.8% | 5,216 | 0.66 |
+| Nemotron-3-Nano-Omni | codec (hybrid) | 57.2% | 1,786 (−66%) | 0.56 (−15%) |
 
-**In short:** the codec setting answers 15–23% faster, but loses 4.4 points of accuracy on Qwen3.5 and 6.6 on Omni.
+**In short:** the codec setting reads two thirds fewer visual tokens and answers 15–23% faster, but loses 4.4 points of accuracy on Qwen3.5 and 6.6 on Omni.
 
 How to read it:
 - **Accuracy:** one standard error is about 2 points on 500 questions.
@@ -265,7 +265,7 @@ How to read it:
   | Nemotron-3-Nano-Omni | dense | 64.0% | 5,216 | 0.66 |
   | Nemotron-3-Nano-Omni | codec (hybrid) | 59.8% | 1,786 | 0.52 |
 
-  This run is 0.2–3.6 points below the reference, and the codec setting loses more here than there (4.4 vs 3.4 points on Qwen3.5, 6.6 vs 4.2 on Omni). Expect some difference: lmms-eval asks the question in its own words and grades answers its own way (see "Differences from the reference" below).
+  The visual tokens match the reference exactly (11,226 vs 11,225 is rounding), so this run picked the same patches. Accuracy is 0.2–3.6 points below the reference, and the codec setting loses more here than there (4.4 vs 3.4 points on Qwen3.5, 6.6 vs 4.2 on Omni). The difference comes from lmms-eval asking each question in its own words and grading answers its own way (see "Differences from the reference" below).
 
 ### Reproduce it
 
