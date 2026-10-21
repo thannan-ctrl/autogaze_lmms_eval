@@ -1,65 +1,144 @@
-# autogaze_lmms_eval
+# lmms-eval bridge for AutoGaze: reproducing the codec result on EgoSchema
 
-A bridge that lets [lmms-eval](../lmms-eval) evaluate the AutoGaze NVILA-8B-HD-Video pipeline (in [AutoGaze](../AutoGaze)) without the two sharing a Python env.
+## The bridge
 
+`autogaze_lmms_eval` is a bridge that lets [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval), a standard independent benchmark tool, evaluate the custom models in AutoGaze without changing either codebase:
+
+```mermaid
+flowchart LR
+    E["🔒 lmms-eval<br/><small>benchmark</small>"] -- "question + video" --> B["✨ Bridge<br/><small>new code</small>"]
+    B --> M["🔒 AutoGaze model<br/><small>⏱ pick patches, answer</small>"]
+    M -. "answer + time" .-> B
+    B -. "answer" .-> E
+    style B fill:#ffcc66,stroke:#e69500,stroke-width:2px,color:#000
 ```
-lmms-eval ──(--model autogaze)──► client.py ──HTTP POST /generate──► server.py ──► AutoGaze
-  (its own env)                                                       (auto_gaze env, GPU)
-```
 
-- **`server.py`** loads the model and the patch-selection processor (`dense`, `autogaze`, `codec`, `codec_nvdec`, …) once. It answers `{video_path, prompt}` requests using the same code path and per-stage timing as `AutoGaze/scripts/breakdown/runner.py`.
-- **`client.py`** is an lmms-eval model plugin, registered through the `lmms_eval.models` entry point. It forwards each question's video path and lmms-eval's own task prompt to the server.
+lmms-eval scores the answers (accuracy); the model's time per question gives latency. The bridge is two small programs, `client.py` (inside lmms-eval) and `server.py` (next to the model), so each side keeps its own Python environment. The launcher runs one bridge + model per method (dense, autogaze, codec), each on its own GPU.
 
-Neither repo is modified, and nothing is written inside this checkout either: codec caches and timing logs default to `../runs/cache/` and `../runs/timing/` (next to this checkout), or wherever `--cache-dir` and `--timing-log` point.
+We use it to reproduce the EgoSchema "Headline result" of `AutoGaze/Codec_Selector_Feasibility.md`, where NVILA-8B-HD-Video reads **all** image patches (dense), patches picked by a small network (autogaze), or patches picked from HEVC compression data (codec).
 
-- **`scripts/run_egoschema_headline.sh`** and **`scripts/headline_table.py`** run and summarize the EgoSchema reproduction of `AutoGaze/Codec_Selector_Feasibility.md`'s headline table. The runbook is [`EGOSCHEMA_HEADLINE.md`](EGOSCHEMA_HEADLINE.md).
+## Expected result
 
-## Setup
+| 500 questions, 1 GB200/method | Accuracy (±2) | Tokens (exact) | Sec/question (varies) |
+|---|--:|--:|--:|
+| codec | 65.4% | 2,783 | 1.44 |
+| dense | 64.0% | 24,690 | 3.54 |
+| autogaze | 65.8% | 1,837 | 7.33 |
+
+## You need
+
+- GB200 (`aarch64`) Slurm node, 4 GPUs, ~250 GB disk; ~1 h setup + ~1 h run
+- SSH access to GitHub `thannan-ctrl/{AutoGaze,autogaze_lmms_eval}` and GitLab `gitlab-master.nvidia.com:12051/seadie/hevc_dump`
+- Hugging Face token that accepted the `lmms-lab/egoschema` terms
+- The kit `/home/scratch.thannan_wwfo/codec_reproduce/{tools,envs,reference}` 
+
+## 1. Node and variables
 
 ```bash
-# lmms-eval env (client side): register --model autogaze. Must run on the same
-# node (filesystem) as the server.
-conda activate lmms-eval
-pip install -e /home/thannan/scratch/codec_reproduce/autogaze_lmms_eval
+srun --partition=<gb200 partition> --gres=gpu:4 --time=04:00:00 --pty bash
+tmux
+```
+
+Paste in **every** new shell (unset variables silently fall back to Thannan's paths):
+
+```bash
+export WORK=/path/to/your/codec_reproduce CONDA_BASE=/path/to/your/miniforge-aarch64
+export HF_HOME=$WORK/hf_cache SERVER_ENV=autogaze_av19 CLIENT_ENV=lmms-eval HF_TOKEN=hf_...
+unset PYTHONPATH; mkdir -p $WORK && cd $WORK
+[ -x $CONDA_BASE/bin/conda ] && eval "$($CONDA_BASE/bin/conda shell.bash hook)"
+L=$WORK/autogaze_lmms_eval/scripts/run_egoschema_headline.sh   # launcher
+T=$WORK/autogaze_lmms_eval/scripts/headline_table.py            # results table
+W=$HF_HOME/egoschema/videos/001934bb-81bd-4cd8-a574-0472ef3f6678.mp4   # warm-up video
+uname -m   # must be aarch64
+```
+
+## 2. Conda and code
+
+```bash
+# conda (skip if $CONDA_BASE already exists)
+curl -L -o /tmp/mf.sh https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-aarch64.sh
+bash /tmp/mf.sh -b -p $CONDA_BASE && eval "$($CONDA_BASE/bin/conda shell.bash hook)"
+
+# code at the exact commits used
+git clone git@github.com:thannan-ctrl/AutoGaze.git && git -C AutoGaze checkout 0234e8e2075ce993081f91323b8561f2f85b9e2e
+git clone git@github.com:thannan-ctrl/autogaze_lmms_eval.git && git -C autogaze_lmms_eval checkout ef1fafa0e6b42bf3a100e33713b908d7bde8109c
+git clone https://github.com/EvolvingLMMs-Lab/lmms-eval.git && git -C lmms-eval checkout d6cc2b567db7aeacbbf1af11b6595676e784d1d3
+cp -r /home/scratch.thannan_wwfo/codec_reproduce/{tools,envs,reference,LMMS_EVAL_BRIDGE.md} . && chmod -R u+w tools
+```
+
+Keep all folders side by side in `$WORK`; results go to `$WORK/runs/`.
+
+## 3. Python environments
+
+```bash
+# server (model); needs av 19 — av 18 crashes every few hundred videos
+conda create -y -n autogaze_av19 -c conda-forge python=3.12.13 && conda activate autogaze_av19
+pip install -r envs/server_requirements.txt
+python -c "import av, torch, transformers as t; print(av.__version__, torch.__version__, torch.cuda.is_available(), t.__version__)"
+#   expect: 19.0.1 2.14.1 True 5.14.1
+conda deactivate
+
+# client (lmms-eval + bridge)
+conda create -y -n lmms-eval -c conda-forge python=3.11.15 decord=0.6.0 && conda activate lmms-eval
+pip install -r envs/client_requirements.txt
+pip install --no-deps -e lmms-eval -e autogaze_lmms_eval
 python -c "from lmms_eval.models import get_model; print(get_model('autogaze'))"
+#   expect: <class 'autogaze_lmms_eval.client.AutoGaze'>
+conda deactivate
 ```
 
-The AutoGaze env (server side) needs no install: run the server with `PYTHONPATH` pointing at this checkout, as below. On the GB200 nodes, activate the aarch64 conda first: `eval "$(/home/scratch.thannan_wwfo/miniforge-aarch64/bin/conda shell.bash hook)"`.
-
-## Run
+## 4. Codec tools
 
 ```bash
-# 1. start the server (one mode per server; one GPU each)
-conda activate auto_gaze
-PYTHONPATH=/home/thannan/scratch/codec_reproduce/autogaze_lmms_eval CUDA_VISIBLE_DEVICES=0 \
-  python -m autogaze_lmms_eval.server --mode autogaze --nvf 16 --port 8765
-
-# 2. run lmms-eval against it (same machine/filesystem)
-export HF_HOME=/home/scratch.thannan_wwfo/hf_cache   # Video-MME videos land in $HF_HOME/videomme/data/
-python -m lmms_eval --model autogaze \
-  --model_args server_url=http://127.0.0.1:8765,mode=autogaze \
-  --tasks videomme --batch_size 1 --limit 8 \
-  --log_samples --output_path /home/thannan/scratch/codec_reproduce/lmms_results
+$CONDA_BASE/envs/autogaze_av19/bin/python -m venv .buildtools && .buildtools/bin/pip install cmake==4.4.2
+PATH=$WORK/.buildtools/bin:$PATH tools/build_autogaze_native.sh
+#   expect: [native] native tools ready in .../AutoGaze/native/build_aarch64
 ```
 
-Drop `--limit 8` for the full 2,700 questions. To run several modes in parallel, start one server per GPU on different ports (for example `--mode codec_nvdec --port 8766`).
+## 5. Model and videos
 
-`mode=` in `--model_args` is optional. When it is given, the client refuses to run if the server is serving a different mode.
+```bash
+# check Hugging Face still serves the pinned versions (all must print OK)
+conda activate lmms-eval
+python - <<'EOF'
+from huggingface_hub import HfApi
+a = HfApi()
+for repo, sha in [("nvidia/NVILA-8B-HD-Video", "7a5670e20da435d98b0efdc49f9a536f73985152"),
+                  ("nvidia/AutoGaze", "5100fae739ec1bf3f875914fa1b703846a18943a"),
+                  ("lmms-lab/egoschema", "58350524ea7eb29c47000121f4f4b65eb6b4acb9")]:
+    got = (a.dataset_info if "egoschema" in repo else a.model_info)(repo).sha
+    print(repo, "OK" if got == sha else f"CHANGED to {got}: tell Thannan")
+EOF
+conda deactivate; conda activate autogaze_av19
+hf download nvidia/NVILA-8B-HD-Video --revision 7a5670e20da435d98b0efdc49f9a536f73985152
+hf download nvidia/AutoGaze --revision 5100fae739ec1bf3f875914fa1b703846a18943a
+conda deactivate
 
-## Differences from AutoGaze's own harness
+# videos (~200 GB); if interrupted: rm -rf $HF_HOME/egoschema and re-run with a new name
+$L --download-only egoschema_download
+ls $HF_HOME/egoschema/videos | wc -l   # expect 5032
+```
 
-- **Prompt and parser:** lmms-eval's Video-MME prompt and answer parser are used, not `dataset.build_prompt` / `parse_letter`. Accuracy is therefore comparable to lmms-eval leaderboards, not exactly to `AutoGaze/QUICKSTART.md`.
-- **Generation:** `max_new_tokens` comes from the task (16 for Video-MME, vs 8 in the harness). Decoding is greedy (`do_sample=False`).
+## 6. Test
 
-## Latency
+```bash
+tools/verify_alignment.sh dense autogaze codec       # expect PASS for each
+R=egoschema_smoke_$(date +%Y%m%d_%H%M)
+$L --limit 8 --modes "dense autogaze codec" --warmup-video $W $R   # ~10 min
+python $T runs/$R dense autogaze codec
+python reference/compare_tokens.py runs/$R reference
+#   expect 0 mismatches; mean tokens 25,927 / 1,980 / 2,903 (dense / autogaze / codec)
+```
 
-The server times every request with AutoGaze's own timers (`scripts/breakdown/timing.py`), in the same two phases as `runner.run_question`:
-1. **Preprocessing:** video decode, image prep, AutoGaze or codec patch selection.
-2. **`model.generate`:** ViT, LLM prefill and LLM decode.
+## 7. Full run and results
 
-The fields are the same as the harness's (`decode_ms`, `image_preproc_ms`, `autogaze_ops_ms`, `autogaze_model_ms`, `codec_*`, `vit_ms`, `llm_prefill_ms`, `llm_decode_ms`, `e2e_ms`, …). Each `/generate` reply carries them under `timing`. They are also appended to `../runs/timing/<mode>_nvf<nvf>.jsonl` (or `--timing-log`), with lmms-eval's `{task, split, doc_id}` under `meta` so rows join with `--log_samples` output.
+```bash
+R=egoschema_headline_$(date +%Y%m%d)    # every run needs a new name
+$L --modes "dense autogaze codec" --warmup-video $W $R   # ~1 h; logs in runs/$R/logs/
+python $T runs/$R dense autogaze codec                   # accuracy + timing, compare with Expected result
+python reference/compare_tokens.py runs/$R reference     # expect 500 questions, 0 mismatches
+```
 
-- **Warmup:** `--warmup-video <some.mp4> --warmup-n 2` runs untimed, unlogged requests first. Codec caches are redirected to a temp directory during warmup, as the harness does. Without warmup, drop the first rows (`request_idx`) yourself.
-- **Codec caches:** a cache hit skips the encode, so time codec modes with an empty `--cache-dir`.
-- **Logits:** as in the harness, prefill computes logits for the last position only. `--full-seq-logits` turns that off.
-- **The log is appended to:** a restarted server adds rows to the same file, with `request_idx` starting again at 0.
+Always pass `--modes`: the default adds `codec_nvdec`, which needs a newer driver.
+
+**More:** `AutoGaze/Codec_Selector_Feasibility.md` (original study), `autogaze_lmms_eval/EGOSCHEMA_HEADLINE.md` (launcher options), `LMMS_EVAL_BRIDGE.md` (bridge internals).
