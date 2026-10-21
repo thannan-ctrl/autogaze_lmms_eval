@@ -44,30 +44,19 @@ chmod -R a-w AutoGaze lmms-eval autogaze_lmms_eval tools envs reference
 | `runs/` | read only; only the launcher, `verify_alignment.sh` and lmms-eval write there |
 | `.claude/` | nothing: these are the agent's own rules |
 
-**2. Rules and prompt with your paths.** Both files in `autogaze_lmms_eval/repro/` name Thannan's paths; write your own copies:
+**2. Claude Code settings.** Install the rules from `repro/claude_settings.local.json` with your paths:
 
 ```bash
-fix() { sed -e "s#/home/scratch.thannan_wwfo/codec_reproduce#$WORK#g" -e "s#/home/thannan/scratch/codec_reproduce#$WORK#g" \
-            -e "s#/home/scratch.thannan_wwfo/hf_cache#$HF_HOME#g"     -e "s#/home/thannan/scratch/hf_cache#$HF_HOME#g" \
-            -e "s#/home/scratch.thannan_wwfo/miniforge-aarch64#$CONDA_BASE#g" -e "s#/home/thannan/scratch/miniforge-aarch64#$CONDA_BASE#g" "$@"; }
 mkdir -p .claude
-fix autogaze_lmms_eval/repro/claude_settings.local.json > .claude/settings.local.json   # agent's rules
-fix autogaze_lmms_eval/repro/RUN_SESSION_PROMPT.md > run_prompt.md                      # agent's task
+sed -e "s#/home/scratch.thannan_wwfo/codec_reproduce#$WORK#g" -e "s#/home/thannan/scratch/codec_reproduce#$WORK#g" \
+    -e "s#/home/scratch.thannan_wwfo/hf_cache#$HF_HOME#g"     -e "s#/home/thannan/scratch/hf_cache#$HF_HOME#g" \
+    -e "s#/home/scratch.thannan_wwfo/miniforge-aarch64#$CONDA_BASE#g" -e "s#/home/thannan/scratch/miniforge-aarch64#$CONDA_BASE#g" \
+    autogaze_lmms_eval/repro/claude_settings.local.json > .claude/settings.local.json
 ```
 
-The rules have three layers: `permissions.deny` blocks the agent's file-edit tool on the folders above, `sandbox.filesystem.denyWrite` blocks its shell commands from writing there, and `autoMode.hard_deny` lists the same rules in plain English so auto mode never approves them. Check `run_prompt.md` for anything specific to Santa Clara (Slurm partition, account) and adjust it.
+It has three layers: `permissions.deny` blocks the agent's file-edit tool on those folders, `sandbox.filesystem.denyWrite` blocks its shell commands from writing there, and `autoMode.hard_deny` lists the same rules in plain English so auto mode never approves them.
 
-**3. Start and prompt the agent.** In tmux on the GPU node, in a shell where step 1's variables (including `HF_TOKEN`) are set:
-
-```bash
-cd $WORK && claude      # must start in $WORK so it loads .claude/
-```
-
-Inside Claude Code, type `/sandbox` and turn sandboxing on, then send:
-
-> Read run_prompt.md fully and carry it out exactly. HF_TOKEN is already set in the environment.
-
-The agent then downloads the videos, runs the alignment check, the 8-question test and the full run (~1–2 h; it reports after the test and continues unless something looks off), and ends with the results tables, the gap to the original numbers, and a results section appended to `LMMS_EVAL_BRIDGE.md`. It stops at the first failure and asks you instead of working around it.
+**3. Sandbox.** Start the agent from `$WORK` (so it loads `.claude/`), turn on sandboxing with `/sandbox`, and give it `autogaze_lmms_eval/repro/RUN_SESSION_PROMPT.md` as the task (swap in your paths with the same `sed`). It downloads the videos and runs steps 6–7, stops at the first failure, and never prints `HF_TOKEN`.
 
 ## You need
 
