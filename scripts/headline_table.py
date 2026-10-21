@@ -18,7 +18,7 @@ import sys
 
 TASK = "egoschema_subset"
 MODES = ["codec_nvdec", "codec", "dense", "autogaze"]
-CODEC_MODES = {"codec", "codec_nvdec", "codec_geo", "codec_ord"}
+CODEC_MODES = {"codec", "codec_nvdec", "codec_geo", "codec_ord", "codec_mv", "codec_mv_hybrid", "codec_mv_keep"}
 
 # Codec_Selector_Feasibility.md, Headline result (AutoGaze harness, commit cfa11e0,
 # job 2383304): accuracy %, tokens, then seconds.
@@ -146,8 +146,12 @@ def main():
         sys.exit("nothing to summarize")
 
     info = os.path.join(args.run_dir, "run_info.txt")
+    model = "nvila"
     if os.path.exists(info):
-        print("```\n" + open(info).read().rstrip() + "\n```\n")
+        text = open(info).read()
+        print("```\n" + text.rstrip() + "\n```\n")
+        m = re.search(r"^model=(\S+)", text, re.M)
+        model = m.group(1) if m else model
 
     print("**This run** (lmms-eval `egoschema_subset` through the bridge). Mean seconds per question.\n")
     print("| Mode | N | Accuracy | Tokens | Preproc (incl. selector) | of which selector | ViT | LLM | **E2E** |")
@@ -159,12 +163,16 @@ def main():
         else:
             print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | (no timing log) | | | | | |")
 
-    print("\n**Headline** (AutoGaze harness, `Codec_Selector_Feasibility.md`), and the difference (this run − headline).\n")
-    print("| Mode | Accuracy | Tokens | Preproc | of which selector | ViT | LLM | **E2E** | ΔAcc (pts) | ΔE2E |")
-    print("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
+    if model == "nvila":
+        print("\n**Headline** (AutoGaze harness, `Codec_Selector_Feasibility.md`), and the difference (this run − headline).\n")
+        print("| Mode | Accuracy | Tokens | Preproc | of which selector | ViT | LLM | **E2E** | ΔAcc (pts) | ΔE2E |")
+        print("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
+    else:
+        print(f"\n(model={model}: the NVILA headline comparison does not apply; see AutoGaze/RESULTS_LATENCY_ACCURACY.md "
+              "on branch pareto/main for the H100 model_compat numbers.)")
     for mode, d in results.items():
         h = HEADLINE.get(mode)
-        if h is None:
+        if h is None or model != "nvila":
             continue
         d_e2e = f"{d['e2e'] - h['e2e']:+.2f} s" if "e2e" in d else ""
         print(f"| {mode} | {h['acc']:.1f}% | {h['tokens']:,} | {h['preproc']:.2f} s | {fmt_selector(h)} | {h['vit']:.2f} s "

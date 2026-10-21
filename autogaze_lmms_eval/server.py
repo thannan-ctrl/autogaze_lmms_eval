@@ -27,6 +27,10 @@ call is required for correct output (SigLIP patch grid, dense keep-all position
 fix, codec selector injection) and also installs the processor-side timers.
 timing.install_model_hooks adds the ViT/LLM timers and, like the harness by
 default, computes prefill logits for the last position only.
+
+--model qwen3_5 / nemotron_omni serve Qwen3.5-9B / Nemotron-3-Nano-Omni through
+AutoGaze's model_compat adapters instead (mc_backend.py; modes dense, codec_mv,
+codec_mv_hybrid, codec_mv_keep). --model nvila (default) is the path above.
 """
 import argparse
 import json
@@ -45,6 +49,7 @@ DEFAULT_RUNS_DIR = os.path.join(os.path.dirname(_PKG_ROOT), "runs")
 DEFAULT_CACHE_DIR = os.path.join(DEFAULT_RUNS_DIR, "cache")
 DEFAULT_TIMING_DIR = os.path.join(DEFAULT_RUNS_DIR, "timing")
 MODES = ("dense", "autogaze", "codec", "codec_nvdec", "codec_geo", "codec_ord", "autogaze_singlescale")
+MODELS = ("nvila", "qwen3_5", "nemotron_omni")
 CODEC_CACHE_ATTRS = ("CACHE_DIR", "NVDEC_CACHE_DIR", "HEVC_AUTOGAZE_CACHE_DIR")
 
 
@@ -220,7 +225,7 @@ class AutoGazeRunner:
                     setattr(self.codec_selector, a, v)
 
 
-def make_handler(runner: AutoGazeRunner):
+def make_handler(runner):  # AutoGazeRunner or mc_backend.MCRunner
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, body: dict) -> None:
             data = json.dumps(body).encode()
@@ -261,9 +266,16 @@ def make_handler(runner: AutoGazeRunner):
 
 
 def main() -> None:
+    from autogaze_lmms_eval import mc_backend
+
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--model", default="nvila", choices=MODELS)
     ap.add_argument("--repo-dir", default=DEFAULT_REPO_DIR)
-    ap.add_argument("--mode", default="autogaze", choices=MODES)
+    ap.add_argument("--mc-root", default=None,
+                    help="non-nvila models: checkout holding model_compat (default: --repo-dir)")
+    ap.add_argument("--model-path", default=None,
+                    help="non-nvila models: local weights dir or hub id (default: mc_backend.DEFAULT_MODEL_PATH)")
+    ap.add_argument("--mode", default="autogaze", choices=MODES + tuple(m for m in mc_backend.ARM_FOR_MODE if m not in MODES))
     ap.add_argument("--nvf", type=int, default=16, help="number of video frames (FIXED_NUM_VIDEO_FRAMES)")
     ap.add_argument("--max-batch-size-autogaze", type=int, default=64)
     ap.add_argument("--device", default="cuda:0")
@@ -279,10 +291,18 @@ def main() -> None:
     args = ap.parse_args()
 
     timing_log = args.timing_log or os.path.join(DEFAULT_TIMING_DIR, f"{args.mode}_nvf{args.nvf}.jsonl")
-    runner = AutoGazeRunner(
-        args.repo_dir, args.mode, args.nvf, args.max_batch_size_autogaze, args.device, args.cache_dir,
-        timing_log, full_seq_logits=args.full_seq_logits,
-    )
+    if args.model == "nvila":
+        if args.mode not in MODES:
+            ap.error(f"--mode {args.mode} needs a non-nvila --model")
+        runner = AutoGazeRunner(
+            args.repo_dir, args.mode, args.nvf, args.max_batch_size_autogaze, args.device, args.cache_dir,
+            timing_log, full_seq_logits=args.full_seq_logits,
+        )
+    else:
+        runner = mc_backend.MCRunner(
+            args.model, args.mc_root, args.repo_dir, args.mode, args.nvf, args.device, args.cache_dir,
+            timing_log, model_path=args.model_path,
+        )
     if args.warmup_video:
         runner.warmup(args.warmup_video, args.warmup_n)
     server = HTTPServer((args.host, args.port), make_handler(runner))

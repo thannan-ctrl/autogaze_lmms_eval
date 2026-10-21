@@ -174,4 +174,41 @@ python reference/compare_tokens.py runs/$R reference     # expect 500 questions,
 
 Always pass `--modes`: the default adds `codec_nvdec`, which needs a newer driver.
 
+## 8. Other models: Qwen3.5-9B and Nemotron-3-Nano-Omni-30B-A3B
+
+`--model qwen3_5` and `--model nemotron_omni` serve these models through AutoGaze's `model_compat` adapters. This is the code behind `AutoGaze/RESULTS_LATENCY_ACCURACY.md` on branch `pareto/main`. It is read from the `AutoGaze` checkout, which must be at commit `9899fd6`, and never edited. That commit differs from `0234e8e` outside `model_compat/` only in docs and figures, so the NVILA steps above are unchanged by it. `--mc-root` points elsewhere if needed.
+
+Each request runs `model_compat.runner._one` with the pareto "best" settings: the H.264 motion-vector selector, strict L1, and EgoSchema at native resolution. lmms-eval supplies the prompt and scores the answer. Modes:
+
+| Mode | model_compat arm |
+|---|---|
+| `dense` | `dense` |
+| `codec_mv` | `codec` (keep 20% / 6%) |
+| `codec_mv_hybrid` | `codec@first=1.0@chunk=16@rest=0.25` (recommended point) |
+| `codec_mv_keep` | `codec@first=0.6@rest=0.25` |
+
+**Server env.** The server needs the `autogaze_av19` packages plus a few others:
+- `causal-conv1d` and `mamba-ssm`, built for aarch64 against torch 2.14.1.
+- `timm einops open_clip_torch`, and `decord librosa soundfile scipy`, which the Omni remote code imports.
+- `fla`, taken from `MC_PYTHONPATH` (default: model_compat's vendored copy).
+
+Without the fast kernels, Qwen refuses to load and Omni runs a slow path.
+
+**Weights.**
+- Qwen: `hf download Qwen/Qwen3.5-9B` into `$HF_HOME`.
+- Omni: the local weights dir (default in `mc_backend.py`) plus `hf download nvidia/C-RADIOv4-H` for its vision-tower code.
+
+```bash
+R=qwen35_smoke_$(date +%Y%m%d_%H%M)
+SERVER_ENV=<env> $L --model qwen3_5 --nvf 128 --limit 8 --modes "dense codec_mv codec_mv_hybrid" --warmup-video $W $R
+SERVER_ENV=<env> $L --model nemotron_omni --nvf 64 --limit 8 --modes "dense codec_mv codec_mv_hybrid" --warmup-video $W omni_smoke_$(date +%Y%m%d_%H%M)
+python $T runs/$R dense codec_mv codec_mv_hybrid
+```
+
+**Reference values.** These are H100, model_compat's own prompt and parser:
+- Qwen3.5 128f: dense 72.8%, hybrid 69.4%.
+- Omni 64f: dense 64.0%, hybrid 59.8%.
+
+Expect a few points of difference here, from lmms-eval's prompt and parser and from GB200 latency.
+
 **More:** `AutoGaze/Codec_Selector_Feasibility.md` (original study), `autogaze_lmms_eval/EGOSCHEMA_HEADLINE.md` (launcher options), `LMMS_EVAL_BRIDGE.md` (bridge internals).

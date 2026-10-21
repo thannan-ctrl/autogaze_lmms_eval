@@ -20,6 +20,17 @@
 #   --base-port P         mode i listens on P+i (default 8765)
 #   --runs-dir DIR        default: <codec_reproduce>/runs
 #   --repo-dir DIR        AutoGaze checkout (default: <codec_reproduce>/AutoGaze)
+#   --model M             nvila (default) | qwen3_5 | nemotron_omni. The last two run
+#                         AutoGaze's model_compat adapters (modes dense, codec_mv,
+#                         codec_mv_hybrid, codec_mv_keep; see mc_backend.py)
+#   --nvf N               frames per video (default 16; RESULTS_LATENCY_ACCURACY.md
+#                         recommends 128 for qwen3_5, 64 for nemotron_omni)
+#   --mc-root DIR         checkout holding model_compat (default: --repo-dir, which
+#                         must then be at AutoGaze commit 9899fd6, branch pareto/main)
+#   --model-path P        weights dir or hub id for qwen3_5 / nemotron_omni
+#
+# Env for qwen3_5 / nemotron_omni: MC_PYTHONPATH (prepended to the server's
+# PYTHONPATH; default: model_compat's vendored fla kernels) and any MC_* override.
 #
 # Everything the run writes goes to <runs-dir>/<tag>/; nothing is written inside
 # this package or the AutoGaze checkout (codec caches included).
@@ -33,9 +44,13 @@ CONDA_BASE=${CONDA_BASE:-/home/scratch.thannan_wwfo/miniforge-aarch64}
 SERVER_ENV=${SERVER_ENV:-auto_gaze}
 CLIENT_ENV=${CLIENT_ENV:-lmms-eval}
 export HF_HOME=${HF_HOME:-/home/scratch.thannan_wwfo/hf_cache}
+MC_PYTHONPATH=${MC_PYTHONPATH:-/home/scratch.thannan_wwfo/model_compat/pylibs/fla}
 TASK=egoschema_subset
 NVF=16
 MAX_BATCH_SIZE_AUTOGAZE=32  # the harness value for the headline run (server default is 64)
+MODEL=nvila
+MC_ROOT=""  # default: $REPO_DIR
+MODEL_PATH=""
 
 DOWNLOAD_ONLY=0
 LIMIT=""
@@ -63,6 +78,10 @@ while [ $# -gt 0 ]; do
     --base-port) BASE_PORT=$2; shift ;;
     --runs-dir) RUNS_DIR=$2; shift ;;
     --repo-dir) REPO_DIR=$2; shift ;;
+    --model) MODEL=$2; shift ;;
+    --nvf) NVF=$2; shift ;;
+    --mc-root) MC_ROOT=$2; shift ;;
+    --model-path) MODEL_PATH=$2; shift ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown option $1 (see --help)" ;;
     *) [ -z "$TAG" ] || die "more than one tag given: $TAG $1"; TAG=$1 ;;
@@ -70,6 +89,11 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -n "$TAG" ] || { usage; die "missing <tag>"; }
+
+case "$MODEL" in
+  nvila|qwen3_5|nemotron_omni) ;;
+  *) die "unknown --model $MODEL (nvila, qwen3_5, nemotron_omni)" ;;
+esac
 
 if [ "$DOWNLOAD_ONLY" = 1 ]; then
   MODES=dense
@@ -90,7 +114,22 @@ fi
 [ -x "$CONDA_BASE/bin/conda" ] || die "no conda at $CONDA_BASE"
 [ -d "$REPO_DIR/scripts/breakdown" ] || die "no AutoGaze checkout at $REPO_DIR"
 [ -n "${HF_TOKEN:-}" ] || log "WARNING: HF_TOKEN is not set; lmms-lab/egoschema needs an authenticated download"
+MC_ROOT=${MC_ROOT:-$REPO_DIR}
+if [ "$MODEL" != nvila ]; then
+  [ -d "$MC_ROOT/model_compat/adapters" ] || die "no model_compat in $MC_ROOT: check out AutoGaze commit 9899fd6 (branch pareto/main)"
+  # model_compat's frame sampler loads dump_cu even for dense, and the MV selector
+  # falls back to the HEVC path on intra-only windows.
+  native="$REPO_DIR/native/build_aarch64"
+  [ -x "$native/dump_cu" ] || die "$MODEL needs $native/dump_cu: build AutoGaze/native first (README step 4)"
+  for m in "${MODE_ARR[@]}"; do
+    case "$m" in
+      dense|codec_mv|codec_mv_hybrid|codec_mv_keep) ;;
+      *) die "mode $m is not available for $MODEL (dense, codec_mv, codec_mv_hybrid, codec_mv_keep)" ;;
+    esac
+  done
+fi
 for m in "${MODE_ARR[@]}"; do
+  [ "$MODEL" = nvila ] || break
   case "$m" in
     codec|codec_nvdec|codec_geo|codec_ord)
       # Without these the codec selector silently falls back to slower paths
@@ -120,6 +159,7 @@ mkdir -p "$RUN_DIR/logs"
 # submission file relative to the cwd when it doesn't get an output path.
 RUN_DIR=$(cd "$RUN_DIR" && pwd)
 REPO_DIR=$(cd "$REPO_DIR" && pwd)
+MC_ROOT=$(cd "$MC_ROOT" && pwd)
 [ -z "$WARMUP_VIDEO" ] || WARMUP_VIDEO=$(cd "$(dirname "$WARMUP_VIDEO")" && pwd)/$(basename "$WARMUP_VIDEO")
 cd "$RUN_DIR"
 
@@ -143,8 +183,13 @@ print(urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/health", timeout=5
   echo "host=$(hostname)"
   echo "slurm_job=${SLURM_JOB_ID:-}"
   echo "modes=${MODES} gpus=${GPU_ARR[*]} limit=${LIMIT:-none} warmup_video=${WARMUP_VIDEO:-none} warmup_n=$WARMUP_N"
-  echo "nvf=$NVF max_batch_size_autogaze=$MAX_BATCH_SIZE_AUTOGAZE task=$TASK"
+  echo "model=$MODEL nvf=$NVF max_batch_size_autogaze=$MAX_BATCH_SIZE_AUTOGAZE task=$TASK"
   echo "autogaze_commit=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  if [ "$MODEL" != nvila ]; then
+    echo "model_compat_commit=$(git -C "$MC_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown) mc_root=$MC_ROOT"
+    echo "model_path=${MODEL_PATH:-default} mc_pythonpath=$MC_PYTHONPATH"
+    echo "mc_env=$(env | grep '^MC_' | sort | tr '\n' ' ')"
+  fi
   echo "lmms_eval=$("${IN_ENV[@]}" "$CLIENT_ENV" python -c 'import lmms_eval, os; print(os.path.dirname(os.path.dirname(lmms_eval.__file__)))' 2>/dev/null)"
   echo "driver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)"
 } > "$RUN_DIR/run_info.txt"
@@ -165,11 +210,17 @@ for i in "${!MODE_ARR[@]}"; do
   m=${MODE_ARR[$i]}
   port=$((BASE_PORT + i))
   if health "$port" > /dev/null; then die "port $port is already serving: $(health "$port")"; fi
-  args=(--repo-dir "$REPO_DIR" --mode "$m" --nvf "$NVF" --max-batch-size-autogaze "$MAX_BATCH_SIZE_AUTOGAZE"
+  args=(--model "$MODEL" --repo-dir "$REPO_DIR" --mode "$m" --nvf "$NVF" --max-batch-size-autogaze "$MAX_BATCH_SIZE_AUTOGAZE"
         --port "$port" --cache-dir "$RUN_DIR/cache_$m" --timing-log "$RUN_DIR/timing_$m.jsonl")
   [ -z "$WARMUP_VIDEO" ] || args+=(--warmup-video "$WARMUP_VIDEO" --warmup-n "$WARMUP_N")
-  log "starting $m server on GPU ${GPU_ARR[$i]}, port $port"
-  CUDA_VISIBLE_DEVICES=${GPU_ARR[$i]} PYTHONPATH="$PKG_ROOT" \
+  server_pp="$PKG_ROOT"
+  if [ "$MODEL" != nvila ]; then
+    args+=(--mc-root "$MC_ROOT")
+    [ -z "$MODEL_PATH" ] || args+=(--model-path "$MODEL_PATH")
+    [ -z "$MC_PYTHONPATH" ] || server_pp="$PKG_ROOT:$MC_PYTHONPATH"
+  fi
+  log "starting $m server ($MODEL) on GPU ${GPU_ARR[$i]}, port $port"
+  CUDA_VISIBLE_DEVICES=${GPU_ARR[$i]} PYTHONPATH="$server_pp" \
     "${IN_ENV[@]}" "$SERVER_ENV" python -u -m autogaze_lmms_eval.server "${args[@]}" > "$RUN_DIR/logs/server_$m.log" 2>&1 &
   SERVER_PIDS+=($!)
 done
