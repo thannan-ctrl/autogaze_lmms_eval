@@ -12,13 +12,15 @@
 # AutoGaze/RESULTS_LATENCY_ACCURACY.md (pareto/main 9899fd6): its conda env
 # (nemo-omni), its x86_64 native build, its weights, Qwen 128 frames, Omni 64
 # frames at 675 patches, arms dense and the strict-L1 hybrid. lmms-eval
-# (d6cc2b5) supplies prompt, parser and scoring. Arms run in parallel, one GPU
-# each, like the reference's concurrent one-GPU jobs.
+# (d6cc2b5) supplies prompt, parser and scoring. Like the reference, the arms run
+# one after another in the same job on one 80 GB H100 (the partition's nodes have
+# one GPU each), so dense and hybrid are compared on the same host; jobs for
+# different models run in parallel on different nodes.
 #
 # Writes only runs/<tag>/ (via run_egoschema_headline.sh) and the Slurm log in
 # runs/_slurm/. Only [status] lines go to the log; numbers stay in SUMMARY.md.
 #SBATCH --partition=H100_80G_HBM3_SXM_AMD_preprod
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:H100:1,gpu_memory:80G
 #SBATCH --time=04:00:00
 #SBATCH --job-name=run_eval
 #SBATCH --output=/home/scratch.thannan_wwfo/codec_reproduce/runs/_slurm/run_eval_%j.log
@@ -90,7 +92,7 @@ inenv() { bash -c 'eval "$("$0"/bin/conda shell.bash hook)" && conda activate "$
   echo "bridge_commit=$(git -C "$PKG" rev-parse HEAD) bridge_dirty=$(git -C "$PKG" status --porcelain | wc -l)"
   chk "x86_64 node"          test "$(uname -m)" = x86_64
   chk "H100 GPUs"            bash -c 'nvidia-smi -L | grep -q H100'
-  chk "2 GPUs allocated"     bash -c '[ "$(nvidia-smi -L | wc -l)" -ge 2 ]'
+  chk "1 GPU, 80 GB"          bash -c '[ "$(nvidia-smi -L | wc -l)" -ge 1 ] && [ "$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)" -ge 79000 ]'
   chk "HF_TOKEN set"         test -n "${HF_TOKEN:-}"
   chk "AutoGaze at pin"      test "$(git -C "$WORK/AutoGaze" rev-parse HEAD)" = "$PIN_AUTOGAZE"
   chk "lmms-eval at pin"     test "$(git -C "$WORK/lmms-eval" rev-parse HEAD)" = "$PIN_LMMS_EVAL"
@@ -116,33 +118,38 @@ sys.exit(f"{sys.argv[2]} is one of the {len(ids)} evaluated videos" if sys.argv[
 cat "$PRE"
 [ "$fail" = 0 ] || die "preflight failed (see $PRE); nothing was run"
 
-GPUS=$(echo "${CUDA_VISIBLE_DEVICES:-0,1}" | tr ',' ' ' | cut -d' ' -f1-2)
-BASE_PORT=$((20000 + (${SLURM_JOB_ID:-$$} % 4000) * 4))   # concurrent jobs on one node never share ports
-launch() {  # launch <stage> [extra launcher args...]
-  "$LAUNCHER" --model "$MODEL" --model-path "$MODEL_PATH" --nvf "$NVF" --modes "$MODES" --gpus "$GPUS" \
+GPU=$(echo "${CUDA_VISIBLE_DEVICES:-0}" | cut -d, -f1)
+BASE_PORT=$((20000 + (${SLURM_JOB_ID:-$$} % 4000) * 4))
+launch() {  # launch <stage> <mode> [extra launcher args...]: one arm, into runs/<tag>/<stage>/<mode>/
+  mkdir -p "$SUITE/$1"
+  "$LAUNCHER" --model "$MODEL" --model-path "$MODEL_PATH" --nvf "$NVF" --modes "$2" --gpus "$GPU" \
     --base-port "$BASE_PORT" --warmup-video "$WARMUP_VIDEO" --server-env "$SERVER_ENV" \
-    --mc-pythonpath "$MC_PYTHONPATH" --runs-dir "$SUITE" "${@:2}" "$1"
+    --mc-pythonpath "$MC_PYTHONPATH" --runs-dir "$SUITE/$1" "${@:3}" "$2"
 }
-gate() {  # gate <stage>: every mode's [status] line must be all ok
-  local f=$SUITE/$1/logs/headline_table.log n
-  n=$(grep -c '^\[status\]' "$f" || true)
-  [ "$n" = "$(wc -w <<< "$MODES")" ] && ! grep '^\[status\]' "$f" | grep -qv ': timing ok, client log ok, e2e cross-check ok, replies ok$'
+gate() {  # gate <stage> <mode>: the arm's [status] line must be all ok
+  grep -qx "\[status\] $2: timing ok, client log ok, e2e cross-check ok, replies ok" "$SUITE/$1/$2/logs/headline_table.log"
+}
+stage() {  # stage <stage> <die|warn> [extra launcher args...]: every arm, one after another
+  local m
+  for m in $MODES; do
+    log "$1: $m"
+    if ! launch "$1" "$m" "${@:3}"; then
+      [ "$2" = die ] && die "$1 $m failed (see $SUITE/$1/$m/logs/)"; FAILED=1; log "$1 $m failed (see $SUITE/$1/$m/logs/)"; continue
+    fi
+    gate "$1" "$m" || { [ "$2" = die ] && die "$1 $m gate failed (see $SUITE/$1/$m/logs/headline_table.log)"
+                        FAILED=1; log "$1 $m: status lines not all ok (see $SUITE/$1/$m/logs/headline_table.log)"; }
+  done
 }
 
-log "smoke: $SMOKE_N questions"
-launch smoke --limit "$SMOKE_N" || die "smoke run failed (see $SUITE/smoke/logs/)"
-gate smoke || die "smoke gate failed (see $SUITE/smoke/logs/headline_table.log)"
+FAILED=0
+stage smoke die --limit "$SMOKE_N"
 log "smoke passed the gate"
-
-if [ "$SMOKE_ONLY" = 0 ]; then
-  log "full: 500 questions"
-  launch full || die "full run failed (see $SUITE/full/logs/)"
-  gate full || log "full run finished but its status lines are not all ok (see $SUITE/full/logs/headline_table.log)"
-fi
+[ "$SMOKE_ONLY" = 1 ] || stage full warn
 
 inenv "$CLIENT_ENV" python "$PKG/scripts/summarize_suite.py" "$SUITE" > "$SUITE/SUMMARY.md" 2> "$SUITE/summary.log" \
   || die "summarize_suite.py failed (see $SUITE/summary.log)"
 cat "$SUITE/summary.log"
 ( cd "$SUITE" && find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum
-  for s in smoke full; do [ -f "$s/SHA256SUMS" ] && sha256sum "$s/SHA256SUMS"; done; true ) > "$SUITE/SHA256SUMS"
+  find smoke full -mindepth 2 -maxdepth 2 -name SHA256SUMS -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum ) > "$SUITE/SHA256SUMS"
+[ "$FAILED" = 0 ] || die "full run finished with failed arms; SUMMARY.md has what completed (see the [run_eval] lines above)"
 log "done: $SUITE/SUMMARY.md (read-only)"

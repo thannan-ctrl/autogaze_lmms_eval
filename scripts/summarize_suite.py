@@ -1,4 +1,4 @@
-"""Summarize one run_eval.sbatch suite (runs/<tag>/{smoke,full}) into SUMMARY.md.
+"""Summarize one run_eval.sbatch suite (runs/<tag>/{smoke,full}/<mode>/) into SUMMARY.md.
 
 Usage: python summarize_suite.py <runs/<tag>> > <runs/<tag>>/SUMMARY.md
 
@@ -43,15 +43,6 @@ def read_info(stage_dir):
     return text, kv
 
 
-def stage_results(stage_dir, modes):
-    out = {}
-    for mode in modes:
-        samples = ht.load_samples(stage_dir, mode)
-        if samples is None:
-            out[mode] = None
-            continue
-        out[mode] = ht.summarize(mode, samples, ht.load_timing(stage_dir, mode), ht.load_client(stage_dir, mode))
-    return out
 
 
 def status_line(d):
@@ -78,16 +69,24 @@ def main():
 
     for stage in STAGES:
         stage_dir = os.path.join(args.suite_dir, stage)
-        text, info = read_info(stage_dir)
-        if text is None:
+        arms = sorted(d for d in (os.listdir(stage_dir) if os.path.isdir(stage_dir) else [])
+                      if os.path.exists(os.path.join(stage_dir, d, "run_info.txt")))
+        if not arms:
             print(f"## {stage}\n\nnot run.\n")
             continue
-        m = re.search(r"^modes=(.*?) gpus=", text, re.M)
-        modes = m.group(1).split() if m else []
-        res = stage_results(stage_dir, modes)
+        res, info = {}, {}
+        for mode in arms:  # one launcher run per arm: <stage>/<mode>/
+            arm_dir = os.path.join(stage_dir, mode)
+            text, kv = read_info(arm_dir)
+            info = info or kv
+            samples = ht.load_samples(arm_dir, mode)
+            res[mode] = None if samples is None else ht.summarize(
+                mode, samples, ht.load_timing(arm_dir, mode), ht.load_client(arm_dir, mode))
         model, nvf = info.get("model", "?"), int(info.get("nvf", "0") or 0)
-        print(f"## {stage}: {model}, {nvf} frames, lmms-eval `{ht.TASK}`\n")
-        print("```\n" + text.rstrip() + "\n```\n")
+        print(f"## {stage}: {model}, {nvf} frames, lmms-eval `{ht.TASK}`, arms one after another on one GPU\n")
+        for mode in arms:
+            text, _ = read_info(os.path.join(stage_dir, mode))
+            print(f"<details><summary>run_info.txt ({mode})</summary>\n\n```\n{text.rstrip()}\n```\n</details>\n")
         print("| Mode | N | Accuracy | Tokens | Preproc (incl. selector) | of which selector | ViT | LLM | **E2E** "
               "| Bridge server | Client | E2E check | No letter |")
         print("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|--:|")
@@ -104,15 +103,15 @@ def main():
         ref = REFERENCE.get((model, nvf))
         if stage == "full" and ref:
             print("\n**Reference, for information only** (H100 SXM, model_compat's own prompt, parser and "
-                  "max_new_tokens 8; `AutoGaze/RESULTS_LATENCY_ACCURACY.md`). Different GPU, stack and protocol, "
+                  "max_new_tokens 8; `AutoGaze/RESULTS_LATENCY_ACCURACY.md`). Different stack and protocol, "
                   "so differences here are expected and are not a pass/fail.\n")
             print("| Mode | Reference E2E | Reference accuracy | Reference tokens | This run − reference (pts) |")
             print("|---|--:|--:|--:|--:|")
             for mode, d in res.items():
                 if mode in ref:
-                    s, acc, tok = ref[mode]
+                    s_, acc, tok = ref[mode]
                     diff = f"{d['acc'] - acc:+.1f}" if d else "—"
-                    print(f"| {mode} | {s:.2f} s | {acc:.1f}% | {tok:,} | {diff} |")
+                    print(f"| {mode} | {s_:.2f} s | {acc:.1f}% | {tok:,} | {diff} |")
         print()
         for mode, d in res.items():
             print(f"[status] {stage} {mode}: {status_line(d)}", file=sys.stderr)

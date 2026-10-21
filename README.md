@@ -260,7 +260,7 @@ It uses the setup of `AutoGaze/RESULTS_LATENCY_ACCURACY.md`:
 - the `nemo-omni` conda env (torch 2.12, transformers 5.5, av 17);
 - `model_compat/native_build_x86_64`;
 - Qwen at 128 frames with the vendored `fla`, and Omni at 64 frames and 675 patches;
-- the arms `dense` and `codec_mv_hybrid`, run in parallel on the job's 2 GPUs.
+- the arms `dense` and `codec_mv_hybrid`, run one after another on one 80 GB H100 (each node of that partition has one GPU), so both arms are measured on the same host. The Qwen and Omni jobs run in parallel on different nodes. Each arm's output is in `runs/<tag>/{smoke,full}/<arm>/`.
 
 lmms-eval (`lmms-eval-bridge` env) supplies the prompt, the parser and the scoring. `SUMMARY.md` lists the H100 reference values next to this run's numbers, for information only.
 
