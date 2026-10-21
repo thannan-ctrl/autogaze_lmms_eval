@@ -1,0 +1,61 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(//home/scratch.thannan_wwfo/codec_reproduce/AutoGaze/**)",
+      "Edit(//home/thannan/scratch/codec_reproduce/AutoGaze/**)",
+      "Edit(//home/scratch.thannan_wwfo/codec_reproduce/lmms-eval/**)",
+      "Edit(//home/thannan/scratch/codec_reproduce/lmms-eval/**)",
+      "Edit(//home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/**)",
+      "Edit(//home/thannan/scratch/codec_reproduce/autogaze_lmms_eval/**)",
+      "Edit(//home/scratch.thannan_wwfo/codec_reproduce/.claude/**)",
+      "Edit(//home/thannan/scratch/codec_reproduce/.claude/**)",
+      "Edit(//home/scratch.thannan_wwfo/codec_reproduce/runs/**)",
+      "Edit(//home/scratch.thannan_wwfo/codec_reproduce/lmms_results/**)",
+      "Edit(//home/thannan/scratch/codec_reproduce/runs/**)",
+      "Edit(//home/thannan/scratch/codec_reproduce/lmms_results/**)",
+      "Edit(//home/scratch.thannan_wwfo/codec_reproduce/tools/**)",
+      "Edit(//home/scratch.thannan_wwfo/codec_reproduce/REPRO_SPEC.md)",
+      "Edit(//home/scratch.thannan_wwfo/codec_reproduce/RUN_SESSION_PROMPT.md)",
+      "Edit(//home/thannan/scratch/codec_reproduce/tools/**)",
+      "Edit(//home/thannan/scratch/codec_reproduce/REPRO_SPEC.md)",
+      "Edit(//home/thannan/scratch/codec_reproduce/RUN_SESSION_PROMPT.md)",
+      "Edit(//home/scratch.thannan_wwfo/hf_cache/**)",
+      "Edit(//home/thannan/scratch/hf_cache/**)",
+      "Edit(//home/scratch.thannan_wwfo/miniforge-aarch64/**)",
+      "Edit(//home/thannan/scratch/miniforge-aarch64/**)",
+      "Bash(*build_autogaze_native.sh*)"
+    ]
+  },
+  "sandbox": {
+    "filesystem": {
+      "denyWrite": [
+        "/home/scratch.thannan_wwfo/codec_reproduce/AutoGaze",
+        "/home/thannan/scratch/codec_reproduce/AutoGaze",
+        "/home/scratch.thannan_wwfo/codec_reproduce/lmms-eval",
+        "/home/thannan/scratch/codec_reproduce/lmms-eval",
+        "/home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval",
+        "/home/thannan/scratch/codec_reproduce/autogaze_lmms_eval",
+        "/home/scratch.thannan_wwfo/codec_reproduce/tools",
+        "/home/scratch.thannan_wwfo/codec_reproduce/REPRO_SPEC.md",
+        "/home/scratch.thannan_wwfo/codec_reproduce/RUN_SESSION_PROMPT.md",
+        "/home/thannan/scratch/codec_reproduce/tools",
+        "/home/thannan/scratch/codec_reproduce/REPRO_SPEC.md",
+        "/home/thannan/scratch/codec_reproduce/RUN_SESSION_PROMPT.md"
+      ]
+    }
+  },
+  "autoMode": {
+    "hard_deny": [
+      "$defaults",
+      "Any shell command that creates, modifies, moves, or deletes files under /home/scratch.thannan_wwfo/codec_reproduce/AutoGaze (also reachable as /home/thannan/scratch/codec_reproduce/AutoGaze), or changes its git state (commit, checkout, reset, stash, pull, etc.). That directory is read-only reference code.",
+      "Any shell command that creates, modifies, moves, or deletes files under /home/scratch.thannan_wwfo/codec_reproduce/lmms-eval (also reachable as /home/thannan/scratch/codec_reproduce/lmms-eval), or changes its git state (commit, checkout, reset, stash, pull, etc.). That directory is read-only reference code.",
+      "Any shell command that creates, modifies, moves, or deletes files under /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval (also reachable as /home/thannan/scratch/codec_reproduce/autogaze_lmms_eval), installs it (pip install), or changes its git state (commit, checkout, reset, stash, pull, push, etc.). Running its scripts is allowed; their output goes to /home/scratch.thannan_wwfo/codec_reproduce/runs.",
+      "Any shell command that creates, modifies, moves, or deletes files under /home/scratch.thannan_wwfo/codec_reproduce/.claude (also reachable as /home/thannan/scratch/codec_reproduce/.claude). These are the project's permission rules.",
+      "Any shell command that Claude itself uses to create, modify, move, truncate or delete files under /home/scratch.thannan_wwfo/codec_reproduce/runs or /home/scratch.thannan_wwfo/codec_reproduce/lmms_results (also reachable via /home/thannan/scratch/codec_reproduce/...), e.g. rm, mv, cp into, sed -i, shell redirects. Running the autogaze_lmms_eval launcher, tools/verify_alignment.sh or headline_table.py, which write there themselves, is allowed.",
+      "Any shell command that creates, modifies, moves, or deletes files under /home/scratch.thannan_wwfo/codec_reproduce/tools, or modifies /home/scratch.thannan_wwfo/codec_reproduce/REPRO_SPEC.md or /home/scratch.thannan_wwfo/codec_reproduce/RUN_SESSION_PROMPT.md (also reachable via /home/thannan/scratch/codec_reproduce/...). Running tools/verify_alignment.sh is allowed. Running tools/build_autogaze_native.sh is never allowed.",
+      "Any shell command that Claude itself uses to create, modify, move, or delete files under the input data directory /home/scratch.thannan_wwfo/hf_cache (also reachable as /home/thannan/scratch/hf_cache), e.g. rm -rf of egoschema/, mkdir, mv, unzip by hand. Downloads done by the autogaze_lmms_eval launcher, lmms-eval or datasets.load_dataset are allowed.",
+      "Any pip, conda or mamba install, uninstall, upgrade or env create/remove that touches /home/scratch.thannan_wwfo/miniforge-aarch64 (also reachable as /home/thannan/scratch/miniforge-aarch64), and any other write into that directory.",
+      "Any shell command that writes under /home/scratch.thannan_wwfo/codec_reproduce (also reachable as /home/thannan/scratch/codec_reproduce) other than: appending to LMMS_EVAL_BRIDGE.md, and output written by the autogaze_lmms_eval launcher, tools/verify_alignment.sh or lmms-eval into runs/."
+    ]
+  }
+}
