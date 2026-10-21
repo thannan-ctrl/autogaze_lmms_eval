@@ -9,10 +9,42 @@
       "Edit(//home/thannan/scratch/miniforge-aarch64/**)",
       "Edit(//home/scratch.thannan_wwfo/model_compat/**)",
       "Edit(//home/scratch.thannan_wwfo/AutoGaze/**)",
-      "Bash(*build_autogaze_native.sh*)"
+      "Bash(*build_autogaze_native.sh*)",
+      "Edit(//home/scratch.thannan_wwfo/anaconda3/**)",
+      "Edit(//home/thannan/scratch/anaconda3/**)",
+      "Read(//home/scratch.thannan_wwfo/codec_reproduce/runs/**/RESULTS.md)",
+      "Read(//home/scratch.thannan_wwfo/codec_reproduce/runs/**/SUMMARY.md)",
+      "Read(//home/scratch.thannan_wwfo/codec_reproduce/runs/**/*_results.json)",
+      "Read(//home/scratch.thannan_wwfo/codec_reproduce/runs/**/*samples_*.jsonl)",
+      "Read(//home/scratch.thannan_wwfo/codec_reproduce/runs/**/timing_*.jsonl)",
+      "Read(//home/scratch.thannan_wwfo/codec_reproduce/runs/**/client_timing_*.jsonl)",
+      "Read(//home/thannan/scratch/codec_reproduce/runs/**/RESULTS.md)",
+      "Read(//home/thannan/scratch/codec_reproduce/runs/**/SUMMARY.md)",
+      "Read(//home/thannan/scratch/codec_reproduce/runs/**/*_results.json)",
+      "Read(//home/thannan/scratch/codec_reproduce/runs/**/*samples_*.jsonl)",
+      "Read(//home/thannan/scratch/codec_reproduce/runs/**/timing_*.jsonl)",
+      "Read(//home/thannan/scratch/codec_reproduce/runs/**/client_timing_*.jsonl)",
+      "Bash(*RESULTS.md*)",
+      "Bash(*SUMMARY.md*)",
+      "Bash(*_results.json*)",
+      "Bash(*samples_*)",
+      "Bash(*timing_*)"
     ]
   },
   "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "excludedCommands": [
+      "/home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_egoschema_headline.sh *",
+      "/home/thannan/scratch/codec_reproduce/autogaze_lmms_eval/scripts/run_egoschema_headline.sh *",
+      "/home/scratch.thannan_wwfo/codec_reproduce/tools/verify_alignment.sh *",
+      "/home/thannan/scratch/codec_reproduce/tools/verify_alignment.sh *",
+      "sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_eval.sbatch *",
+      "sbatch /home/thannan/scratch/codec_reproduce/autogaze_lmms_eval/scripts/run_eval.sbatch *",
+      "squeue *",
+      "sacct *"
+    ],
     "filesystem": {
       "denyWrite": [
         "/home/scratch.thannan_wwfo/codec_reproduce/AutoGaze",
@@ -44,19 +76,26 @@
         "/home/scratch.thannan_wwfo/miniforge-aarch64",
         "/home/thannan/scratch/miniforge-aarch64",
         "/home/scratch.thannan_wwfo/model_compat",
-        "/home/scratch.thannan_wwfo/AutoGaze"
+        "/home/scratch.thannan_wwfo/AutoGaze",
+        "/home/scratch.thannan_wwfo/anaconda3",
+        "/home/thannan/scratch/anaconda3",
+        "/home/scratch.thannan_wwfo/codec_reproduce/runs",
+        "/home/thannan/scratch/codec_reproduce/runs"
       ]
     }
   },
   "autoMode": {
     "hard_deny": [
       "$defaults",
-      "Any shell command that creates, modifies, moves, deletes or changes permissions (chmod, chown) of files under /home/scratch.thannan_wwfo/codec_reproduce (also reachable as /home/thannan/scratch/codec_reproduce), except output written into /home/scratch.thannan_wwfo/codec_reproduce/runs/<new tag>/ by the autogaze_lmms_eval launcher (scripts/run_egoschema_headline.sh), tools/verify_alignment.sh or lmms-eval when the launcher runs it. This covers code (AutoGaze, lmms-eval, autogaze_lmms_eval, tools, envs, reference), the .claude rules, every doc file, and results: runs/ and lmms_results/ are never touched by hand (no rm, mv, cp into, sed -i, redirects, chmod).",
+      "Any shell command that creates, modifies, moves, deletes or changes permissions (chmod, chown) of files under /home/scratch.thannan_wwfo/codec_reproduce (also reachable as /home/thannan/scratch/codec_reproduce). This covers code (AutoGaze, lmms-eval, autogaze_lmms_eval, tools, envs, reference), the .claude rules, every doc file, and results: runs/ and lmms_results/ are never touched by hand (no rm, mv, cp into, sed -i, redirects, chmod, tee, python open(..., 'w')). The only writers there are autogaze_lmms_eval/scripts/run_eval.sbatch submitted with sbatch, and the autogaze_lmms_eval launcher (autogaze_lmms_eval/scripts/run_egoschema_headline.sh, which runs lmms-eval, the bridge servers and headline_table.py) and tools/verify_alignment.sh, each invoked on its own by its literal absolute path, writing only into a new runs/<tag>/ or runs/cache/verify_<timestamp>/.",
+      "Any attempt to run a command outside the Bash sandbox other than a bare `sbatch` of /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_eval.sbatch, read-only `squeue`/`sacct`, or a bare call of /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_egoschema_headline.sh or /home/scratch.thannan_wwfo/codec_reproduce/tools/verify_alignment.sh (also reachable under /home/thannan/scratch/codec_reproduce): no dangerouslyDisableSandbox, no copies, wrappers or symlinks of these scripts, and no --runs-dir, --repo-dir or --mc-root pointing anywhere but the defaults.",
       "Any git command that changes state (commit, checkout, switch, reset, stash, pull, push, fetch, merge, rebase, clean) in any repository under /home/scratch.thannan_wwfo/codec_reproduce (also reachable as /home/thannan/scratch/codec_reproduce) or in /home/scratch.thannan_wwfo/model_compat, /home/scratch.thannan_wwfo/AutoGaze.",
-      "Any pip, conda or mamba install, uninstall, upgrade or env create/remove, and any other write, under /home/scratch.thannan_wwfo/miniforge-aarch64 (also reachable as /home/thannan/scratch/miniforge-aarch64).",
+      "Any pip, conda or mamba install, uninstall, upgrade or env create/remove, and any other write, under /home/scratch.thannan_wwfo/miniforge-aarch64 or /home/scratch.thannan_wwfo/anaconda3 (also reachable under /home/thannan/scratch/).",
       "Any shell command that Claude itself uses to create, modify, move or delete files under the input data directory /home/scratch.thannan_wwfo/hf_cache (also reachable as /home/thannan/scratch/hf_cache) (e.g. rm -rf of egoschema/, mkdir, mv, unzip by hand, hf download). The only allowed writes there are the egoschema download done by the autogaze_lmms_eval launcher's --download-only, lmms-eval or datasets.load_dataset.",
       "Any shell command that writes under /home/scratch.thannan_wwfo/model_compat or /home/scratch.thannan_wwfo/AutoGaze (model weights, vendored kernels and the model_compat code).",
-      "Running tools/build_autogaze_native.sh, cmake or make anywhere under the AutoGaze checkout."
+      "Running tools/build_autogaze_native.sh, cmake or make anywhere under the AutoGaze checkout.",
+      "Any Slurm command other than (a) `sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_eval.sbatch <args>` (also reachable under /home/thannan/scratch/codec_reproduce), with no sbatch options before the script path, and (b) read-only `squeue` / `sacct` queries. No srun, salloc, scancel, scontrol, sbatch --wrap, sbatch of any other script or of a copy, and no running setup_h100.sh.",
+      "Reading or printing result numbers: any command that opens, greps, cats, copies or parses RESULTS.md, SUMMARY.md, lmms-eval *_results.json or *samples_*.jsonl, or timing_*.jsonl / client_timing_*.jsonl under /home/scratch.thannan_wwfo/codec_reproduce/runs (also reachable under /home/thannan/scratch/codec_reproduce/runs), including recursive grep over runs/. Logs (runs/*/logs/, runs/*/*/logs/, runs/_slurm/), run_info.txt and preflight.txt may be read."
     ]
   }
 }

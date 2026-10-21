@@ -18,8 +18,9 @@
 #                         video that is NOT in the Subset)
 #   --warmup-n N          warmup requests per server (default 2)
 #   --base-port P         mode i listens on P+i (default 8765)
-#   --runs-dir DIR        default: <codec_reproduce>/runs
+#   --runs-dir DIR        default: <codec_reproduce>/runs (must stay inside it)
 #   --repo-dir DIR        AutoGaze checkout (default: <codec_reproduce>/AutoGaze)
+#   --server-env NAME     conda env for the servers (default: $SERVER_ENV, else auto_gaze)
 #   --model M             nvila (default) | qwen3_5 | nemotron_omni. The last two run
 #                         AutoGaze's model_compat adapters (modes dense, codec_mv,
 #                         codec_mv_hybrid, codec_mv_keep; see mc_backend.py)
@@ -28,9 +29,18 @@
 #   --mc-root DIR         checkout holding model_compat (default: --repo-dir, which
 #                         must then be at AutoGaze commit 9899fd6, branch pareto/main)
 #   --model-path P        weights dir or hub id for qwen3_5 / nemotron_omni
+#   --mc-pythonpath DIR   prepended to the server's PYTHONPATH for qwen3_5 /
+#                         nemotron_omni (default: $MC_PYTHONPATH, else
+#                         model_compat's vendored fla kernels)
 #
-# Env for qwen3_5 / nemotron_omni: MC_PYTHONPATH (prepended to the server's
-# PYTHONPATH; default: model_compat's vendored fla kernels) and any MC_* override.
+# Env for qwen3_5 / nemotron_omni: any MC_* override.
+#
+# Agent sessions run this script outside Claude Code's sandbox (excludedCommands
+# in repro/claude_settings.local.json), so it is the only writer of runs/. That is
+# why the tag must be a plain name, the run folder must sit inside
+# <codec_reproduce>/runs, and every directory it loads code from (--repo-dir,
+# --mc-root, --mc-pythonpath, --model-path) must sit inside a read-only input
+# tree: <codec_reproduce>, $CONDA_BASE, $HF_HOME or the model_compat checkout.
 #
 # Everything the run writes goes to <runs-dir>/<tag>/; nothing is written inside
 # this package or the AutoGaze checkout (codec caches included). At the end the
@@ -84,6 +94,8 @@ while [ $# -gt 0 ]; do
     --nvf) NVF=$2; shift ;;
     --mc-root) MC_ROOT=$2; shift ;;
     --model-path) MODEL_PATH=$2; shift ;;
+    --server-env) SERVER_ENV=$2; shift ;;
+    --mc-pythonpath) MC_PYTHONPATH=$2; shift ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown option $1 (see --help)" ;;
     *) [ -z "$TAG" ] || die "more than one tag given: $TAG $1"; TAG=$1 ;;
@@ -91,6 +103,32 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -n "$TAG" ] || { usage; die "missing <tag>"; }
+[[ "$TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "tag must be a plain name ([A-Za-z0-9._-], no '/'): $TAG"
+
+# Writes go only to <codec_reproduce>/runs/<tag>/, and code is loaded only from
+# read-only input trees (see the header).
+under() {  # under <path> <root...>: true if path resolves inside one of the roots
+  local p r
+  p=$(realpath -m -- "$1")
+  shift
+  for r in "$@"; do
+    [ -n "$r" ] || continue
+    r=$(realpath -m -- "$r")
+    case "$p/" in "$r"/*) return 0 ;; esac
+  done
+  return 1
+}
+CODE_ROOTS=("$CODEC_ROOT" "$CONDA_BASE" "$HF_HOME" /home/scratch.thannan_wwfo/model_compat)
+under "$RUNS_DIR" "$CODEC_ROOT/runs" || die "--runs-dir must be inside $CODEC_ROOT/runs: $RUNS_DIR"
+under "$REPO_DIR" "${CODE_ROOTS[@]}" || die "--repo-dir must be inside ${CODE_ROOTS[*]}: $REPO_DIR"
+[ -z "$MC_ROOT" ] || under "$MC_ROOT" "${CODE_ROOTS[@]}" || die "--mc-root must be inside ${CODE_ROOTS[*]}: $MC_ROOT"
+[ -z "$MC_PYTHONPATH" ] || under "$MC_PYTHONPATH" "${CODE_ROOTS[@]}" || die "--mc-pythonpath must be inside ${CODE_ROOTS[*]}: $MC_PYTHONPATH"
+if [[ "$MODEL_PATH" = /* ]]; then
+  under "$MODEL_PATH" "${CODE_ROOTS[@]}" || die "--model-path must be inside ${CODE_ROOTS[*]}: $MODEL_PATH"
+elif [ -n "$MODEL_PATH" ] && [ -e "$MODEL_PATH" ]; then
+  die "--model-path must be an absolute path or a hub id: $MODEL_PATH"
+fi
+[[ "$SERVER_ENV$CLIENT_ENV" =~ ^[A-Za-z0-9._-]+$ ]] || die "conda env names must be plain names: $SERVER_ENV $CLIENT_ENV"
 
 case "$MODEL" in
   nvila|qwen3_5|nemotron_omni) ;;
@@ -165,8 +203,10 @@ MC_ROOT=$(cd "$MC_ROOT" && pwd)
 [ -z "$WARMUP_VIDEO" ] || WARMUP_VIDEO=$(cd "$(dirname "$WARMUP_VIDEO")" && pwd)/$(basename "$WARMUP_VIDEO")
 cd "$RUN_DIR"
 
-# Never write bytecode into the (read-only) package.
+# Never write bytecode into the (read-only) package, and load no Python from
+# outside the inputs checked above.
 export PYTHONDONTWRITEBYTECODE=1
+unset PYTHONPATH PYTHONSTARTUP PYTHONHOME PYTHONUSERBASE
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 
 # "${IN_ENV[@]}" <env> <cmd...>: run cmd in a fresh shell with that conda env

@@ -41,7 +41,7 @@ chmod -R a-w AutoGaze lmms-eval autogaze_lmms_eval tools envs reference LMMS_EVA
 |---|---|
 | `AutoGaze/`, `lmms-eval/`, `autogaze_lmms_eval/`, `tools/` | read and run scripts; never edit, rebuild, `pip install` or change git state |
 | `$HF_HOME`, `$CONDA_BASE` | read only; only the launcher's download writes data |
-| `runs/` | read only; only the launcher, `verify_alignment.sh` and lmms-eval write there, and each finished run is made read-only |
+| `runs/` | read only, enforced by the sandbox; only `run_eval.sbatch`, the launcher and `verify_alignment.sh` (with lmms-eval, the bridge and the summary scripts they start) write there, each into a new folder that is made read-only at the end |
 | `.claude/` | nothing: these are the agent's own rules |
 
 **2. Claude Code settings.** Install the rules from `repro/claude_settings.local.json` with your paths:
@@ -54,9 +54,14 @@ sed -e "s#/home/scratch.thannan_wwfo/codec_reproduce#$WORK#g" -e "s#/home/thanna
     autogaze_lmms_eval/repro/claude_settings.local.json > .claude/settings.local.json
 ```
 
-It has three layers: `permissions.deny` blocks the agent's file-edit tool on those folders, `sandbox.filesystem.denyWrite` blocks its shell commands from writing there, and `autoMode.hard_deny` lists the same rules in plain English so auto mode never approves them.
+It has three layers:
+- `permissions.deny` blocks the agent's file-edit tool on those folders and its reads of result files (`RESULTS.md`, `SUMMARY.md`, lmms-eval results and samples, timing logs).
+- The sandbox is on and strict (`enabled`, `failIfUnavailable`, `allowUnsandboxedCommands: false`), and `sandbox.filesystem.denyWrite` covers the code, the docs, `.claude/`, `runs/`, `$HF_HOME` and the conda installs. Every shell command the agent runs, and everything it starts, therefore can't write there.
+- `sandbox.excludedCommands` lets exactly these run outside the sandbox: `sbatch <abs path>/scripts/run_eval.sbatch …`, the launcher and `tools/verify_alignment.sh` called by their absolute paths, and `squeue`/`sacct`. They're the only writers. They take a plain tag, write only into a new `runs/<tag>/`, load code only from the read-only trees, and lock their output.
 
-**3. Sandbox.** Start the agent from `$WORK` (so it loads `.claude/`), turn on sandboxing with `/sandbox`, and give it `autogaze_lmms_eval/repro/RUN_SESSION_PROMPT.md` as the task (swap in your paths with the same `sed`). It runs steps 6–8 (NVILA, Qwen3.5, Omni; smoke then full), stops at the first failure and never prints `HF_TOKEN`. It does not report results: it gives back only tags, commands, exit codes and the paths of the `RESULTS.md` files the launcher wrote. Its rules deny it edits anywhere in `$WORK`, `$HF_HOME`, `$CONDA_BASE` and the model_compat dirs.
+`autoMode.hard_deny` repeats these rules in plain English so auto mode never approves a way around them.
+
+**3. Sandbox.** Start the agent from `$WORK` (so it loads `.claude/`; the rules turn the sandbox on and Claude Code refuses to start without it) and give it `autogaze_lmms_eval/repro/RUN_SESSION_PROMPT.md` as the task. It submits the two H100 jobs of the "H100: Qwen3.5 and Omni" section below, watches them, resubmits once on a transient failure and otherwise stops and reports. It never prints `HF_TOKEN` and never reads or reports results: it gives back only tags, job ids, commands, exit codes, `preflight.txt` and the paths of the `SUMMARY.md` files the jobs wrote.
 
 ## You need
 
@@ -224,7 +229,6 @@ Each request runs `model_compat.runner._one` with the pareto "best" settings: th
 Needs the `autogaze_mc` env (step 3), the step 8 downloads (step 5), the codec tools (step 4) and the videos.
 
 ```bash
-export MC_PYTHONPATH=$CONDA_BASE/envs/autogaze_mc/lib/python3.12/site-packages   # fla from pip, not Thannan's vendored copy
 R=qwen35_smoke_$(date +%Y%m%d_%H%M)
 SERVER_ENV=autogaze_mc $L --model qwen3_5 --model-path $QWEN --nvf 128 --limit 8 \
     --modes "dense codec_mv codec_mv_hybrid" --warmup-video $W $R            # ~15 min
@@ -243,5 +247,29 @@ Drop `--limit 8` (and use a new name) for the full 500 questions.
 - Omni 64f: dense 64.0%, hybrid 59.8%.
 
 Expect a few points of difference here, from lmms-eval's prompt and parser, and different latency on GB200.
+
+## H100: Qwen3.5 and Omni, end to end
+
+`scripts/run_eval.sbatch` runs one model on `egoschema_subset` (500 questions) on one H100 node:
+1. Preflight checks, written to `runs/<tag>/preflight.txt`: commit pins, a clean checkout, envs and kernels, weights, videos, `HF_TOKEN`, and that the warm-up video isn't one of the 500.
+2. A smoke run of 8 questions, then a gate: every mode must read `timing ok, client log ok, e2e cross-check ok, replies ok`.
+3. The full run, followed by `scripts/summarize_suite.py`, which writes `runs/<tag>/SUMMARY.md`.
+4. `SHA256SUMS`, then `runs/<tag>/` is made read-only.
+
+It uses the setup of `AutoGaze/RESULTS_LATENCY_ACCURACY.md`:
+- the `nemo-omni` conda env (torch 2.12, transformers 5.5, av 17);
+- `model_compat/native_build_x86_64`;
+- Qwen at 128 frames with the vendored `fla`, and Omni at 64 frames and 675 patches;
+- the arms `dense` and `codec_mv_hybrid`, run in parallel on the job's 2 GPUs.
+
+lmms-eval (`lmms-eval-bridge` env) supplies the prompt, the parser and the scoring. `SUMMARY.md` lists the H100 reference values next to this run's numbers, for information only.
+
+```bash
+mkdir -p $WORK/runs/_slurm   # once; Slurm writes the job logs here
+sbatch $WORK/autogaze_lmms_eval/scripts/run_eval.sbatch --model qwen3_5 --dataset egoschema qwen3_5_egoschema_$(date +%Y%m%d_%H%M)
+sbatch $WORK/autogaze_lmms_eval/scripts/run_eval.sbatch --model nemotron_omni --dataset egoschema nemotron_omni_egoschema_$(date +%Y%m%d_%H%M)
+```
+
+`--smoke-only` stops after the gate. To hand this to an agent, install the rules (guardrail 2 above) and give it `RUN_SESSION_PROMPT.md`. Its only commands that write are those two `sbatch` lines.
 
 **More:** `AutoGaze/Codec_Selector_Feasibility.md` (original study), `autogaze_lmms_eval/EGOSCHEMA_HEADLINE.md` (launcher options), `LMMS_EVAL_BRIDGE.md` (bridge internals).
