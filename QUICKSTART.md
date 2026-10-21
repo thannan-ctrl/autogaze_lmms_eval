@@ -61,7 +61,7 @@ bash /tmp/mf.sh -b -p $CONDA_BASE && eval "$($CONDA_BASE/bin/conda shell.bash ho
 
 # code at the exact commits used
 git clone git@github.com:thannan-ctrl/AutoGaze.git && git -C AutoGaze checkout 0234e8e2075ce993081f91323b8561f2f85b9e2e
-git clone git@github.com:thannan-ctrl/autogaze_lmms_eval.git && git -C autogaze_lmms_eval checkout 756fc400a2253444b381bf2b1ee60275e774b81f
+git clone git@github.com:thannan-ctrl/autogaze_lmms_eval.git && git -C autogaze_lmms_eval checkout ef1fafa0e6b42bf3a100e33713b908d7bde8109c
 git clone https://github.com/EvolvingLMMs-Lab/lmms-eval.git && git -C lmms-eval checkout d6cc2b567db7aeacbbf1af11b6595676e784d1d3
 cp -r /home/scratch.thannan_wwfo/codec_reproduce/{tools,envs,reference,LMMS_EVAL_BRIDGE.md} . && chmod -R u+w tools
 ```
