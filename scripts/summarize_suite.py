@@ -87,16 +87,16 @@ def main():
         for mode in arms:
             text, _ = read_info(os.path.join(stage_dir, mode))
             print(f"<details><summary>run_info.txt ({mode})</summary>\n\n```\n{text.rstrip()}\n```\n</details>\n")
-        print("| Mode | N | Accuracy | Tokens | Preproc (incl. selector) | of which selector | ViT | LLM | **E2E** "
-              "| Bridge server | Client | E2E check | No letter |")
-        print("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|--:|")
+        print("| Mode | N | Accuracy | Tokens | Visual tokens | Preproc (incl. selector) | of which selector | ViT | LLM "
+              "| **E2E** | Bridge server | Client | E2E check | No letter |")
+        print("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|--:|")
         for mode, d in res.items():
             if d is None:
-                print(f"| {mode} | missing | | | | | | | | | | | |")
+                print(f"| {mode} | missing | | | | | | | | | | | | |")
             elif "e2e" not in d:
-                print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | (no timing log) | | | | | | | | | {d['no_letter']} |")
+                print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | (no timing log) | | | | | | | | | | {d['no_letter']} |")
             else:
-                print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | {d['tokens']:,.0f} | {d['preproc']:.2f} s "
+                print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | {d['tokens']:,.0f} | {ht.fmt_n(d.get('visual'))} | {d['preproc']:.2f} s "
                       f"| {ht.fmt_selector(d)} | {d['vit']:.2f} s | {d['llm']:.2f} s | **{d['e2e']:.2f} s** "
                       f"| {ht.fmt_s(d.get('server'))} | {ht.fmt_s(d.get('client'))} | {ht.e2e_check(d)} "
                       f"| {d['no_letter']}/{d['n']} |")
@@ -105,7 +105,7 @@ def main():
             print("\n**Reference, for information only** (H100 SXM, model_compat's own prompt, parser and "
                   "max_new_tokens 8; `AutoGaze/RESULTS_LATENCY_ACCURACY.md`). Different stack and protocol, "
                   "so differences here are expected and are not a pass/fail.\n")
-            print("| Mode | Reference E2E | Reference accuracy | Reference tokens | This run − reference (pts) |")
+            print("| Mode | Reference E2E | Reference accuracy | Reference visual tokens | This run − reference (pts) |")
             print("|---|--:|--:|--:|--:|")
             for mode, d in res.items():
                 if mode in ref:

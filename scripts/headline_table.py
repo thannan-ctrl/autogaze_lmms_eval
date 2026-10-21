@@ -125,6 +125,9 @@ def summarize(mode, samples, timing, client=None):
     mean = lambda k: statistics.fmean(r.get(k) or 0.0 for r in rows)
     out.update(
         tokens=mean("num_tokens"),
+        # Visual tokens alone (model_compat logs them; the AutoGaze path doesn't),
+        # the number RESULTS_LATENCY_ACCURACY.md reports.
+        visual=mean("n_visual_tokens") if all(r.get("n_visual_tokens") is not None for r in rows) else None,
         preproc=mean("preproc_ms") / 1000,
         vit=mean("vit_ms") / 1000,
         llm=mean("llm_ms") / 1000,
@@ -162,6 +165,10 @@ def summarize(mode, samples, timing, client=None):
             sys.exit(f"{mode}: client timing log lacks {len(missing)} questions, e.g. doc_id {missing[:5]}")
         out["client"] = statistics.fmean(client[d] for d in timing) / 1000
     return out
+
+
+def fmt_n(x):
+    return "—" if x is None else f"{x:,.0f}"
 
 
 def fmt_s(x):
@@ -212,14 +219,14 @@ def main():
         model = m.group(1) if m else model
 
     print("**This run** (lmms-eval `egoschema_subset` through the bridge). Mean seconds per question.\n")
-    print("| Mode | N | Accuracy | Tokens | Preproc (incl. selector) | of which selector | ViT | LLM | **E2E** |")
-    print("|---|--:|--:|--:|--:|--:|--:|--:|--:|")
+    print("| Mode | N | Accuracy | Tokens | Visual tokens | Preproc (incl. selector) | of which selector | ViT | LLM | **E2E** |")
+    print("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
     for mode, d in results.items():
         if "e2e" in d:
-            print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | {d['tokens']:,.0f} | {d['preproc']:.2f} s | {fmt_selector(d)} "
+            print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | {d['tokens']:,.0f} | {fmt_n(d.get('visual'))} | {d['preproc']:.2f} s | {fmt_selector(d)} "
                   f"| {d['vit']:.2f} s | {d['llm']:.2f} s | **{d['e2e']:.2f} s** |")
         else:
-            print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | (no timing log) | | | | | |")
+            print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | (no timing log) | | | | | | |")
 
     print("\n**End-to-end latency cross-check.** Mean seconds per question. *Reported*: `e2e_ms` from the "
           "repo's own timers (the E2E column above). *Sum of parts*: preproc + ViT + LLM as reported. "
