@@ -149,9 +149,13 @@ def summarize(mode, samples, timing, client=None):
     # End-to-end cross-check against the bridge's own clocks.
     out["parts"] = out["preproc"] + out["vit"] + out["llm"]
     if all(r.get("bridge_server_ms") is not None for r in rows):
-        gap = [r["bridge_server_ms"] - r["e2e_ms"] for r in rows]
-        out.update(server=mean("bridge_server_ms") / 1000, gap_mean=statistics.fmean(gap) / 1000,
-                   gap_p95=pctl(gap, 0.95) / 1000)
+        # Steps the bridge runs outside the repo's timer on purpose (model_compat's
+        # untimed video pre-read and per-question cache cleanup) are timed by the
+        # bridge and taken out of the gap; anything else still counts.
+        untimed = [(r.get("preread_ms") or 0.0) + (r.get("cleanup_ms") or 0.0) for r in rows]
+        gap = [r["bridge_server_ms"] - r["e2e_ms"] - u for r, u in zip(rows, untimed)]
+        out.update(server=mean("bridge_server_ms") / 1000, untimed=statistics.fmean(untimed) / 1000,
+                   gap_mean=statistics.fmean(gap) / 1000, gap_p95=pctl(gap, 0.95) / 1000)
     if client is not None:
         missing = sorted(set(timing) - set(client))
         if missing:
@@ -221,14 +225,16 @@ def main():
           "repo's own timers (the E2E column above). *Sum of parts*: preproc + ViT + LLM as reported. "
           "*Bridge server*: the bridge server's clock around each answer (includes untimed file reads). "
           "*Client*: lmms-eval's side of each HTTP request, so also JSON and HTTP overhead. "
-          "*Gap*: bridge server − reported, per question.\n")
-    print("| Mode | Reported E2E | Sum of parts | Bridge server | Client round trip | Gap mean | Gap p95 | Check |")
-    print("|---|--:|--:|--:|--:|--:|--:|---|")
+          "*Untimed by design*: the video pre-read and cache cleanup that model_compat leaves out of its E2E "
+          "(as its own runner does), timed by the bridge. "
+          "*Gap*: bridge server − reported − untimed by design, per question.\n")
+    print("| Mode | Reported E2E | Sum of parts | Bridge server | Client round trip | Untimed by design | Gap mean | Gap p95 | Check |")
+    print("|---|--:|--:|--:|--:|--:|--:|--:|---|")
     for mode, d in results.items():
         if "e2e" not in d:
             continue
         print(f"| {mode} | {d['e2e']:.2f} s | {d['parts']:.2f} s | {fmt_s(d.get('server'))} | {fmt_s(d.get('client'))} "
-              f"| {fmt_s(d.get('gap_mean'))} | {fmt_s(d.get('gap_p95'))} | {e2e_check(d)} |")
+              f"| {fmt_s(d.get('untimed'))} | {fmt_s(d.get('gap_mean'))} | {fmt_s(d.get('gap_p95'))} | {e2e_check(d)} |")
 
     if model == "nvila":
         print("\n**Headline** (AutoGaze harness, `Codec_Selector_Feasibility.md`), and the difference (this run − headline).\n")

@@ -127,16 +127,23 @@ class MCRunner:
             raise ValueError("model_compat adapters decode greedily only (do_sample=True requested)")
         # Both adapters read MAX_NEW_TOKENS from their module at generate time.
         self.adapter_mod.MAX_NEW_TOKENS = int(max_new_tokens)
-        self.runner._preread(video_path)  # untimed, like runner.main with MC_FULL=1
+        # Outside model_compat's e2e_ms, like runner.main with MC_FULL=1, but timed
+        # here so the bridge's end-to-end cross-check can account for them.
+        t = time.perf_counter()
+        self.runner._preread(video_path)
+        preread_ms = (time.perf_counter() - t) * 1000
         item = {"video_path": video_path, "prompt": prompt}
         try:
             out, ms, frac, _ = self.runner._one(self.adapter, item, self.arm, self.nvf, self.cache_dir)
         finally:
             # Every question pays its own (cold) HEVC fallback encode, as in runner.main.
+            t = time.perf_counter()
             shutil.rmtree(self.cache_dir, ignore_errors=True)
             os.makedirs(self.cache_dir, exist_ok=True)
-        return {"text": out["response"].strip(), "num_tokens": int(out["seq_len"]),
-                "timing": self._breakdown(out, ms, frac)}
+            cleanup_ms = (time.perf_counter() - t) * 1000
+        timing = self._breakdown(out, ms, frac)
+        timing.update(preread_ms=preread_ms, cleanup_ms=cleanup_ms)
+        return {"text": out["response"].strip(), "num_tokens": int(out["seq_len"]), "timing": timing}
 
     @staticmethod
     def _breakdown(out: dict, ms: dict, frac: float) -> dict:

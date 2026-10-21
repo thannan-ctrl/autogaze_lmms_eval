@@ -61,7 +61,13 @@ It has three layers:
 
 `autoMode.hard_deny` repeats these rules in plain English so auto mode never approves a way around them.
 
-**3. Sandbox.** Start the agent from `$WORK` (so it loads `.claude/`; the rules turn the sandbox on and Claude Code refuses to start without it) and give it `autogaze_lmms_eval/repro/RUN_SESSION_PROMPT.md` as the task. It submits the two H100 jobs of the "H100: Qwen3.5 and Omni" section below, watches them, resubmits once on a transient failure and otherwise stops and reports. It never prints `HF_TOKEN` and never reads or reports results: it gives back only tags, job ids, commands, exit codes, `preflight.txt` and the paths of the `SUMMARY.md` files the jobs wrote.
+**3. Sandbox.** Start the agent from `$WORK`, passing the same rules again with `--settings`, with `HF_TOKEN` exported:
+
+```bash
+cd $WORK && claude --settings $WORK/.claude/settings.local.json
+```
+
+The rules turn the sandbox on, and Claude Code refuses to start without it. You need `--settings` if your organization's managed settings make the sandbox admin-required (for example `allowManagedDomainsOnly`). In that case Claude Code ignores a project's `excludedCommands`, so without the flag the agent can't reach Slurm. Check it by asking the new session to run `squeue -u $USER`. Then give it `autogaze_lmms_eval/repro/RUN_SESSION_PROMPT.md` as the task. It submits the two H100 jobs of the "H100: Qwen3.5 and Omni" section below, watches them, resubmits once on a transient failure and otherwise stops and reports. It never prints `HF_TOKEN` and never reads or reports results: it gives back only tags, job ids, commands, exit codes, `preflight.txt` and the paths of the `SUMMARY.md` files the jobs wrote.
 
 ## You need
 
@@ -270,6 +276,6 @@ sbatch $WORK/autogaze_lmms_eval/scripts/run_eval.sbatch --model qwen3_5 --datase
 sbatch $WORK/autogaze_lmms_eval/scripts/run_eval.sbatch --model nemotron_omni --dataset egoschema nemotron_omni_egoschema_$(date +%Y%m%d_%H%M)
 ```
 
-`--smoke-only` stops after the gate. To hand this to an agent, install the rules (guardrail 2 above) and give it `RUN_SESSION_PROMPT.md`. Its only commands that write are those two `sbatch` lines.
+`--smoke-only` stops after the gate. To hand this to an agent, install the rules (guardrail 2 above), start it with `--settings` (guardrail 3) and give it `RUN_SESSION_PROMPT.md`. Its only commands that write are those two `sbatch` lines.
 
 **More:** `AutoGaze/Codec_Selector_Feasibility.md` (original study), `autogaze_lmms_eval/EGOSCHEMA_HEADLINE.md` (launcher options), `LMMS_EVAL_BRIDGE.md` (bridge internals).
