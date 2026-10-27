@@ -17,7 +17,7 @@ Where this spec is silent, `REPRO_SPEC.md` sections 5 (prediction format) and 7 
 | model | encoder | temporal patch | frames (F) | GPU type | path |
 |---|---|---|---|---|---|
 | Qwen3.5-9B | Qwen ViT, 16 px | 2 (3D conv) | 128 | H100 80GB | `model_compat` adapter `qwen3_5` (existing) |
-| NVILA-8B-HD-Video | SigLIP, 14 px, scales 56/112/196/392, 1,060 patches per tile-frame | 1 (per frame) | 64 | GB200 | its own pipeline (`scripts/breakdown`), new codec backend `mv` (Phase 1) |
+| NVILA-8B-HD-Video | SigLIP, 14 px, scales 56/112/196/392, 1,060 patches per tile-frame | 1 (per frame) | 16 | GB200 | its own pipeline (`scripts/breakdown`), new codec backend `mv` (Phase 1) |
 
 Omni and Super are out of scope. Latency is compared only within a model, never across models;
 cross-model comparisons use accuracy and kept-token fraction.
@@ -95,8 +95,11 @@ that produces a number (selection identity, NVILA EgoSchema gate, memory check) 
   `model_compat` adapter, so NVILA's input building stays its own). Gate on EgoSchema 500 at
   16 frames (`--arms gate`): `dense` has 24,690 tokens exactly and accuracy within the CI of
   64.0%; the native codec arm reproduces 65.4% within its CI. If either fails, NVILA work stops.
-- Memory / context check: NVILA `dense@64f` on the longest Video-MME video. If it does not fit,
-  F = 32 for NVILA and this spec is amended before Phase 2.
+- NVILA frames: F = 16 (amended 2026-10-27). At 64 frames dense NVILA needs ~98k tokens on EgoSchema
+  (32k LLM context) and SigLIP's attention mask OOMs on a GB200 (dev job 2884385); 32 frames is
+  ~49k. 16 frames with stock HD tiling is ~24.7k (EgoSchema) / ~30.5k (16:9). Consequence: NVILA
+  and Qwen differ in frames as well as encoder, so question M compares them by kept-token fraction.
+  Remaining check in run mode: dense@16f on the longest Video-MME video fits.
 - Bridge wiring: mode names `codec_mv_f<first>_c<chunk>_r<rest>[_p<pool>]` (Qwen) and
   `codec_mv`, `codec_mv_f<first>_c<chunk>_r<rest>` (NVILA); launcher `--task`; the smoke gate
   (`headline_table.py`) handles any task, including group tasks such as mvbench.

@@ -11,7 +11,7 @@
 #
 # Tasks (EXTENSION_SPEC.md section 4): egoschema_subset videomme lvbench mlvu_dev longvideobench_val_v mvbench
 #   tempcompass_multi_choice nextqa_mc_test perceptiontest_val_mc
-# Arm sets (section 5; F = 128 frames for qwen3_5, 64 for nvila):
+# Arm sets (section 5; F = 128 frames for qwen3_5, 16 for nvila):
 #   main         dense + recommended codec_mv_f1.0_c16_r0.25 (= codec_mv_hybrid)
 #   main_pxrepro qwen3_5, videomme only: main at the reproduction's resolution (MC_QWEN_MAX_PIXELS=4294967296)
 #   grid         dense, default codec_mv, the 8 configs first {0.5,1.0} x chunk {8,16} x rest {0.12,0.25};
@@ -80,11 +80,11 @@ case "$MODEL" in
     ARCH=aarch64 GPU_NAME=GB200 CONDA_BASE=/home/scratch.thannan_wwfo/miniforge-aarch64 SERVER_ENV=auto_gaze CLIENT_ENV=lmms-eval
     LMMS_DIR=/home/thannan/lmms-eval  # the copy the aarch64 lmms-eval env imports (LMMS_EVAL_BRIDGE.md section 3)
     MC_NATIVE_BUILD=$WORK/AutoGaze/native/build_aarch64 MC_PYTHONPATH="" KERNELS=""
-    MODEL_PATH="" NVF=64 RECOMMENDED=codec_mv_f1.0_c16_r0.25
+    MODEL_PATH="" NVF=16 RECOMMENDED=codec_mv_f1.0_c16_r0.25  # 64 f exceeds the 32k context (job 2884385)
     case "$ARMS" in
       main) MODES="dense $RECOMMENDED" ;;
       grid) ablation_task; MODES="dense codec_mv codec$GRID" ;;
-      gate) [ "$TASK" = egoschema_subset ] || die "gate runs on egoschema_subset"; NVF=16 MODES="dense codec" ;;
+      gate) [ "$TASK" = egoschema_subset ] || die "gate runs on egoschema_subset"; MODES="dense codec" ;;
       *) die "--arms for nvila: main, grid, gate" ;;
     esac ;;
   *) die "--model must be qwen3_5 or nvila" ;;
