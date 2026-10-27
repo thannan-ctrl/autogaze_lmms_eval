@@ -11,7 +11,7 @@
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=48
 #SBATCH --mem=480G
-#SBATCH --time=06:00:00
+#SBATCH --time=08:00:00
 #SBATCH --job-name=run_eval_super
 #SBATCH --output=/home/scratch.thannan_wwfo/codec_reproduce/runs/_slurm/run_eval_%j.log
 set -euo pipefail
