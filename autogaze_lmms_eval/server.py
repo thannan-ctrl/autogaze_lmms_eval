@@ -100,6 +100,11 @@ class AutoGazeRunner:
 
         print(f"[server] building {mode} processor (nvf={nvf})", flush=True)
         self.proc = processor.build(mode, nvf)
+        # processor.build registers codec_mv_f* modes; print what this mode actually runs, so a mode that silently
+        # fell through to AutoGaze's own selector would show here.
+        print(f"[server] {mode}: codec backend {codec_selector.BACKEND_FOR_MODE.get(mode, 'none')}, "
+              f"gazing_ratio_tile {self.proc.gazing_ratio_tile}, gazing_ratio_thumbnail {self.proc.gazing_ratio_thumbnail}",
+              flush=True)
         print(f"[server] loading {config.MODEL_PATH} on {device}", flush=True)
         self.model = AutoModel.from_pretrained(
             config.MODEL_PATH, trust_remote_code=True, dtype=torch.bfloat16, max_batch_size_siglip=32,
@@ -191,6 +196,7 @@ class AutoGazeRunner:
             "selector_glue_ms": selector_glue_ms,
             "selector_wall_ms": pre["selector_wall_ms"],
             "selector_wait_ms": pre["selector_wait_ms"],
+            "mv_fallback_hevc_samples": pre.get("mv_fallback_hevc_samples", 0.0),
             "other_ms": other_ms,
             "cpu_ms": decode_ms + image_preproc_ms + autogaze_ops_ms + other_ms,
             "gpu_ms": autogaze_model_ms,
