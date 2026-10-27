@@ -17,14 +17,16 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import headline_table as ht  # noqa: E402
 
-# AutoGaze/RESULTS_LATENCY_ACCURACY.md (branch pareto/main, 9899fd6), EgoSchema
+# AutoGaze/RESULTS_LATENCY_ACCURACY.md (branch pareto/main, 6ef7314), EgoSchema
 # detailed tables: H100 SXM, model_compat prompt/parser, max_new_tokens 8.
-# (seconds per question, accuracy %, visual tokens)
+# (seconds per question, accuracy %, visual tokens). Super VL: 4x H100, Table 1
+# and RESULTS_LOG.md A5 (hybrid 8/0.12 = codec_mv_hybrid8).
 REFERENCE = {
     ("qwen3_5", 128): {"dense": (1.14, 72.8, 11225), "codec_mv_hybrid": (0.81, 69.4, 3847),
                        "codec_mv": (0.70, 54.6, 872), "codec_mv_keep": (0.81, 68.6, 3285)},
     ("nemotron_omni", 64): {"dense": (0.66, 64.0, 5216), "codec_mv_hybrid": (0.52, 59.8, 1786),
                             "codec_mv": (0.51, 47.4, 405), "codec_mv_keep": (0.53, 59.0, 1525)},
+    ("nemotron_super", 64): {"dense": (1.45, 54.6, 5216), "codec_mv_hybrid8": (1.11, 51.4, 1776)},
 }
 STAGES = ("smoke", "full")
 
@@ -83,7 +85,9 @@ def main():
             res[mode] = None if samples is None else ht.summarize(
                 mode, samples, ht.load_timing(arm_dir, mode), ht.load_client(arm_dir, mode))
         model, nvf = info.get("model", "?"), int(info.get("nvf", "0") or 0)
-        print(f"## {stage}: {model}, {nvf} frames, lmms-eval `{ht.TASK}`, arms one after another on one GPU\n")
+        gpus = info.get("gpus", "?")
+        where = "one GPU" if "," not in gpus else f"the same {gpus.count(',') + 1} GPUs"
+        print(f"## {stage}: {model}, {nvf} frames, lmms-eval `{ht.TASK}`, arms one after another on {where}\n")
         for mode in arms:
             text, _ = read_info(os.path.join(stage_dir, mode))
             print(f"<details><summary>run_info.txt ({mode})</summary>\n\n```\n{text.rstrip()}\n```\n</details>\n")
@@ -102,7 +106,7 @@ def main():
                       f"| {d['no_letter']}/{d['n']} |")
         ref = REFERENCE.get((model, nvf))
         if stage == "full" and ref:
-            print("\n**Reference, for information only** (H100 SXM, model_compat's own prompt, parser and "
+            print("\n**Reference, for information only** (H100 SXM, same GPU count as this run, model_compat's own prompt, parser and "
                   "max_new_tokens 8; `AutoGaze/RESULTS_LATENCY_ACCURACY.md`). Different stack and protocol, "
                   "so differences here are expected and are not a pass/fail.\n")
             print("| Mode | Reference E2E | Reference accuracy | Reference visual tokens | This run − reference (pts) |")

@@ -13,7 +13,9 @@
 #                         $HF_HOME/egoschema exactly once. Run this first.
 #   --limit N             pass --limit N to lmms-eval (smoke test)
 #   --modes "M1 M2 ..."   default: "dense autogaze codec codec_nvdec"
-#   --gpus "G1 G2 ..."    GPU index per mode, same order (default: 0 1 2 ...)
+#   --gpus "G1 G2 ..."    GPU index per mode, same order (default: 0 1 2 ...). An
+#                         entry may be a comma list ("0,1,2,3"): that server sees all
+#                         of those GPUs (nemotron_super is split over every one)
 #   --warmup-video PATH   untimed warmup video for every server (use an EgoSchema
 #                         video that is NOT in the Subset)
 #   --warmup-n N          warmup requests per server (default 2)
@@ -21,26 +23,35 @@
 #   --runs-dir DIR        default: <codec_reproduce>/runs (must stay inside it)
 #   --repo-dir DIR        AutoGaze checkout (default: <codec_reproduce>/AutoGaze)
 #   --server-env NAME     conda env for the servers (default: $SERVER_ENV, else auto_gaze)
-#   --model M             nvila (default) | qwen3_5 | nemotron_omni. The last two run
-#                         AutoGaze's model_compat adapters (modes dense, codec_mv,
-#                         codec_mv_hybrid, codec_mv_keep; see mc_backend.py)
+#   --server-python PATH  interpreter for the servers, run with --server-env active
+#                         (default: that env's python). nemotron_super uses the
+#                         nemo-super venv, which is layered on nemo-omni
+#   --model M             nvila (default) | qwen3_5 | nemotron_omni | nemotron_super.
+#                         The last three run AutoGaze's model_compat adapters (modes
+#                         dense, codec_mv, codec_mv_hybrid, codec_mv_hybrid8,
+#                         codec_mv_keep; see mc_backend.py)
 #   --nvf N               frames per video (default 16; RESULTS_LATENCY_ACCURACY.md
-#                         recommends 128 for qwen3_5, 64 for nemotron_omni)
+#                         recommends 128 for qwen3_5, 64 for nemotron_omni and
+#                         nemotron_super)
 #   --mc-root DIR         checkout holding model_compat (default: --repo-dir, which
-#                         must then be at AutoGaze commit 9899fd6, branch pareto/main)
-#   --model-path P        weights dir or hub id for qwen3_5 / nemotron_omni
-#   --mc-pythonpath DIR   prepended to the server's PYTHONPATH for qwen3_5 /
-#                         nemotron_omni (default: $MC_PYTHONPATH, else
-#                         model_compat's vendored fla kernels)
+#                         must then be at AutoGaze commit 6ef7314, branch pareto/main)
+#   --model-path P        weights dir or hub id for the model_compat models
+#   --mc-pythonpath DIR   prepended to the server's PYTHONPATH for the model_compat
+#                         models (default: $MC_PYTHONPATH, else model_compat's
+#                         vendored fla kernels)
 #
-# Env for qwen3_5 / nemotron_omni: any MC_* override.
+# Env for the model_compat models: any MC_* override.
 #
 # Agent sessions run this script outside Claude Code's sandbox (excludedCommands
 # in repro/claude_settings.local.json), so it is the only writer of runs/. That is
 # why the tag must be a plain name, the run folder must sit inside
 # <codec_reproduce>/runs, and every directory it loads code from (--repo-dir,
-# --mc-root, --mc-pythonpath, --model-path) must sit inside a read-only input
-# tree: <codec_reproduce>, $CONDA_BASE, $HF_HOME or the model_compat checkout.
+# --mc-root, --mc-pythonpath, --model-path, --server-python) must sit inside a
+# read-only input tree: <codec_reproduce>, $CONDA_BASE, $HF_HOME or the
+# model_compat checkout. Inside a Slurm job, --model-path may also be the job's
+# own node-local staging dir /tmp/run_eval_<job id> (run_eval.sbatch creates it
+# fresh and downloads the pinned Super VL weights there; they don't fit on the
+# shared filesystem).
 #
 # Everything the run writes goes to <runs-dir>/<tag>/; nothing is written inside
 # this package or the AutoGaze checkout (codec caches included). At the end the
@@ -63,6 +74,7 @@ MAX_BATCH_SIZE_AUTOGAZE=32  # the harness value for the headline run (server def
 MODEL=nvila
 MC_ROOT=""  # default: $REPO_DIR
 MODEL_PATH=""
+SERVER_PY=""  # default: the server env's python
 
 DOWNLOAD_ONLY=0
 LIMIT=""
@@ -95,6 +107,7 @@ while [ $# -gt 0 ]; do
     --mc-root) MC_ROOT=$2; shift ;;
     --model-path) MODEL_PATH=$2; shift ;;
     --server-env) SERVER_ENV=$2; shift ;;
+    --server-python) SERVER_PY=$2; shift ;;
     --mc-pythonpath) MC_PYTHONPATH=$2; shift ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown option $1 (see --help)" ;;
@@ -123,16 +136,21 @@ under "$RUNS_DIR" "$CODEC_ROOT/runs" || die "--runs-dir must be inside $CODEC_RO
 under "$REPO_DIR" "${CODE_ROOTS[@]}" || die "--repo-dir must be inside ${CODE_ROOTS[*]}: $REPO_DIR"
 [ -z "$MC_ROOT" ] || under "$MC_ROOT" "${CODE_ROOTS[@]}" || die "--mc-root must be inside ${CODE_ROOTS[*]}: $MC_ROOT"
 [ -z "$MC_PYTHONPATH" ] || under "$MC_PYTHONPATH" "${CODE_ROOTS[@]}" || die "--mc-pythonpath must be inside ${CODE_ROOTS[*]}: $MC_PYTHONPATH"
+STAGE_ROOT=${SLURM_JOB_ID:+/tmp/run_eval_$SLURM_JOB_ID}
 if [[ "$MODEL_PATH" = /* ]]; then
-  under "$MODEL_PATH" "${CODE_ROOTS[@]}" || die "--model-path must be inside ${CODE_ROOTS[*]}: $MODEL_PATH"
+  under "$MODEL_PATH" "${CODE_ROOTS[@]}" "$STAGE_ROOT" || die "--model-path must be inside ${CODE_ROOTS[*]} $STAGE_ROOT: $MODEL_PATH"
 elif [ -n "$MODEL_PATH" ] && [ -e "$MODEL_PATH" ]; then
   die "--model-path must be an absolute path or a hub id: $MODEL_PATH"
+fi
+if [ -n "$SERVER_PY" ]; then
+  [[ "$SERVER_PY" = /* ]] && under "$SERVER_PY" "${CODE_ROOTS[@]}" || die "--server-python must be an absolute path inside ${CODE_ROOTS[*]}: $SERVER_PY"
+  [ -x "$SERVER_PY" ] || die "--server-python is not executable: $SERVER_PY"
 fi
 [[ "$SERVER_ENV$CLIENT_ENV" =~ ^[A-Za-z0-9._-]+$ ]] || die "conda env names must be plain names: $SERVER_ENV $CLIENT_ENV"
 
 case "$MODEL" in
-  nvila|qwen3_5|nemotron_omni) ;;
-  *) die "unknown --model $MODEL (nvila, qwen3_5, nemotron_omni)" ;;
+  nvila|qwen3_5|nemotron_omni|nemotron_super) ;;
+  *) die "unknown --model $MODEL (nvila, qwen3_5, nemotron_omni, nemotron_super)" ;;
 esac
 
 if [ "$DOWNLOAD_ONLY" = 1 ]; then
@@ -156,15 +174,15 @@ case "$(uname -m)" in aarch64|x86_64) ;; *) die "run this on a GB200 (aarch64) o
 [ -n "${HF_TOKEN:-}" ] || log "WARNING: HF_TOKEN is not set; lmms-lab/egoschema needs an authenticated download"
 MC_ROOT=${MC_ROOT:-$REPO_DIR}
 if [ "$MODEL" != nvila ]; then
-  [ -d "$MC_ROOT/model_compat/adapters" ] || die "no model_compat in $MC_ROOT: check out AutoGaze commit 9899fd6 (branch pareto/main)"
+  [ -d "$MC_ROOT/model_compat/adapters" ] || die "no model_compat in $MC_ROOT: check out AutoGaze commit 6ef7314 (branch pareto/main)"
   # model_compat's frame sampler loads dump_cu even for dense, and the MV selector
   # falls back to the HEVC path on intra-only windows.
   native="${MC_NATIVE_BUILD:-$REPO_DIR/native/build_$(uname -m)}"
   [ -x "$native/dump_cu" ] || die "$MODEL needs $native/dump_cu: build AutoGaze/native first (README step 4)"
   for m in "${MODE_ARR[@]}"; do
     case "$m" in
-      dense|codec_mv|codec_mv_hybrid|codec_mv_keep) ;;
-      *) die "mode $m is not available for $MODEL (dense, codec_mv, codec_mv_hybrid, codec_mv_keep)" ;;
+      dense|codec_mv|codec_mv_hybrid|codec_mv_hybrid8|codec_mv_keep) ;;
+      *) die "mode $m is not available for $MODEL (dense, codec_mv, codec_mv_hybrid, codec_mv_hybrid8, codec_mv_keep)" ;;
     esac
   done
 fi
@@ -229,7 +247,7 @@ print(urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/health", timeout=5
   echo "autogaze_commit=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   if [ "$MODEL" != nvila ]; then
     echo "model_compat_commit=$(git -C "$MC_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown) mc_root=$MC_ROOT"
-    echo "model_path=${MODEL_PATH:-default} mc_pythonpath=$MC_PYTHONPATH"
+    echo "model_path=${MODEL_PATH:-default} mc_pythonpath=$MC_PYTHONPATH server_python=${SERVER_PY:-python}"
     echo "mc_env=$(env | grep '^MC_' | sort | tr '\n' ' ')"
   fi
   echo "lmms_eval=$("${IN_ENV[@]}" "$CLIENT_ENV" python -c 'import lmms_eval, os; print(os.path.dirname(os.path.dirname(lmms_eval.__file__)))' 2>/dev/null)"
@@ -263,7 +281,7 @@ for i in "${!MODE_ARR[@]}"; do
   fi
   log "starting $m server ($MODEL) on GPU ${GPU_ARR[$i]}, port $port"
   CUDA_VISIBLE_DEVICES=${GPU_ARR[$i]} PYTHONPATH="$server_pp" \
-    "${IN_ENV[@]}" "$SERVER_ENV" python -u -m autogaze_lmms_eval.server "${args[@]}" > "$RUN_DIR/logs/server_$m.log" 2>&1 &
+    "${IN_ENV[@]}" "$SERVER_ENV" "${SERVER_PY:-python}" -u -m autogaze_lmms_eval.server "${args[@]}" > "$RUN_DIR/logs/server_$m.log" 2>&1 &
   SERVER_PIDS+=($!)
 done
 

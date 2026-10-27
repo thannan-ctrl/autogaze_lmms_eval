@@ -1,9 +1,13 @@
-"""Server backend for the Qwen3.5-9B and Nemotron-3-Nano-Omni-30B-A3B adapters of
-AutoGaze's model_compat package (branch pareto/main, the code behind
-AutoGaze/RESULTS_LATENCY_ACCURACY.md).
+"""Server backend for the Qwen3.5-9B, Nemotron-3-Nano-Omni-30B-A3B and
+Nemotron-3.5-Super-VL-120B-A12B adapters of AutoGaze's model_compat package
+(branch pareto/main, the code behind AutoGaze/RESULTS_LATENCY_ACCURACY.md).
 
 model_compat is imported read-only from the AutoGaze checkout (--repo-dir, at
-commit 9899fd6 of pareto/main, or --mc-root if given); nothing in it is edited. Each request runs model_compat.runner._one, the same
+commit 6ef7314 of pareto/main, or --mc-root if given); nothing in it is edited.
+6ef7314 adds the Super VL adapter and multi-GPU timers on top of 9899fd6; the
+other changes are off unless an MC_* variable turns them on, so Qwen3.5 and Omni
+run as before. Super VL is split over every visible GPU (device_map=auto), so
+its server gets all of them. Each request runs model_compat.runner._one, the same
 per-question path as `python -m model_compat.runner`, with the pareto "best"
 settings of model_compat/slurm/run_pareto.sbatch (v3mv H.264 motion-vector
 selector, selector/preprocessing overlap, parallel frame decode). Two things are
@@ -28,12 +32,14 @@ ARM_FOR_MODE = {
     "dense": "dense",
     "codec_mv": "codec",                                         # default keep 20% / 6%
     "codec_mv_hybrid": "codec@first=1.0@chunk=16@rest=0.25",     # recommended strict-L1 point
+    "codec_mv_hybrid8": "codec@first=1.0@chunk=8@rest=0.12",     # Super VL's recommended strict-L1 point
     "codec_mv_keep": "codec@first=0.6@rest=0.25",
 }
-MODELS = ("qwen3_5", "nemotron_omni")
+MODELS = ("qwen3_5", "nemotron_omni", "nemotron_super")
 DEFAULT_MODEL_PATH = {
     "qwen3_5": "Qwen/Qwen3.5-9B",
     "nemotron_omni": "/home/scratch.thannan_wwfo/model_compat/weights/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16",
+    "nemotron_super": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
 }
 
 # run_pareto.sbatch, SETTING=best. setdefault: an explicitly exported value wins
@@ -46,8 +52,11 @@ MODEL_ENV = {
     "qwen3_5": {"MC_QWEN_PROC_DEVICE": "cuda", "MC_QWEN_MAX_PIXELS": "4294967296"},
     # 675 patches = EgoSchema's native 480x360 (the stock 1024 rule upsamples).
     "nemotron_omni": {"MC_MOE": "grouped", "MC_LLM_ATTN": "sdpa", "MC_OMNI_PATCHES": "675"},
+    # The Super VL sweep behind RESULTS_LATENCY_ACCURACY.md (RESULTS_LOG.md, "Super VL (4x H100)"):
+    # PATCHES=675, FPS=0 (fixed frame count, not the model's 2 fps default), cuDNN attention off.
+    "nemotron_super": {"MC_LLM_ATTN": "sdpa", "MC_SUPER_PATCHES": "675", "MC_FPS": "0", "MC_NO_CUDNN_SDPA": "1"},
 }
-PATH_ENV = {"qwen3_5": "MC_QWEN_PATH", "nemotron_omni": "MC_OMNI_PATH"}
+PATH_ENV = {"qwen3_5": "MC_QWEN_PATH", "nemotron_omni": "MC_OMNI_PATH", "nemotron_super": "MC_SUPER_PATH"}
 ARM_ENV_KEYS = ("MC_VIT_CTX", "MC_QWEN_VIT_CTX", "MC_COARSE")
 
 
@@ -68,7 +77,7 @@ class MCRunner:
         if mode not in ARM_FOR_MODE:
             raise ValueError(f"mode {mode!r} is not available for {model}; expected one of {sorted(ARM_FOR_MODE)}")
         if not os.path.isdir(os.path.join(mc_root, "model_compat")):
-            raise FileNotFoundError(f"no model_compat package under {mc_root}: check out AutoGaze commit 9899fd6 "
+            raise FileNotFoundError(f"no model_compat package under {mc_root}: check out AutoGaze commit 6ef7314 "
                                     "(branch pareto/main) or pass --mc-root")
 
         # model_compat reads these at import time, so set them before importing it.
@@ -125,7 +134,7 @@ class MCRunner:
             raise FileNotFoundError(f"video not found on the server's filesystem: {video_path}")
         if do_sample:
             raise ValueError("model_compat adapters decode greedily only (do_sample=True requested)")
-        # Both adapters read MAX_NEW_TOKENS from their module at generate time.
+        # The adapters read MAX_NEW_TOKENS from their module at generate time.
         self.adapter_mod.MAX_NEW_TOKENS = int(max_new_tokens)
         # Outside model_compat's e2e_ms, like runner.main with MC_FULL=1, but timed
         # here so the bridge's end-to-end cross-check can account for them.

@@ -5,6 +5,8 @@ What to run
 - Submit both jobs (they can run at the same time), each with a new tag:
   sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_eval.sbatch --model qwen3_5 --dataset egoschema qwen3_5_egoschema_<YYYYMMDD_HHMM>
   sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_eval.sbatch --model nemotron_omni --dataset egoschema nemotron_omni_egoschema_<YYYYMMDD_HHMM>
+- Nemotron 3.5 Super VL runs only when asked for, with its own 4-GPU script, in the same form:
+  sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_eval_super.sbatch --model nemotron_super --dataset egoschema nemotron_super_egoschema_<YYYYMMDD_HHMM>
 - Write each call exactly in that form, as the whole Bash call: the literal absolute path, no `sbatch` options before it, no variable as the command, no `VAR=value` prefix, no `cd`, `&&`, `;`, pipes, `$(...)` or redirects. Only that form runs outside your sandbox; anything else cannot write and will fail.
 - Watch with `squeue -u $USER` and `sacct -j <jobid> --format=JobID,State,ExitCode,Elapsed`, and by reading the job log runs/_slurm/run_eval_<jobid>.log and runs/<tag>/preflight.txt, runs/<tag>/{smoke,full}/logs/. Don't poll more often than every 5 minutes; a full job takes up to about 2 hours, mostly queue and model load.
 

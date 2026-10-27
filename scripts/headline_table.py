@@ -25,7 +25,7 @@ import sys
 
 TASK = "egoschema_subset"
 MODES = ["codec_nvdec", "codec", "dense", "autogaze"]
-CODEC_MODES = {"codec", "codec_nvdec", "codec_geo", "codec_ord", "codec_mv", "codec_mv_hybrid", "codec_mv_keep"}
+CODEC_MODES = {"codec", "codec_nvdec", "codec_geo", "codec_ord", "codec_mv", "codec_mv_hybrid", "codec_mv_hybrid8", "codec_mv_keep"}
 
 # Codec_Selector_Feasibility.md, Headline result (AutoGaze harness, commit cfa11e0,
 # job 2383304): accuracy %, tokens, then seconds.

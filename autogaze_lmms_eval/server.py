@@ -28,9 +28,11 @@ fix, codec selector injection) and also installs the processor-side timers.
 timing.install_model_hooks adds the ViT/LLM timers and, like the harness by
 default, computes prefill logits for the last position only.
 
---model qwen3_5 / nemotron_omni serve Qwen3.5-9B / Nemotron-3-Nano-Omni through
-AutoGaze's model_compat adapters instead (mc_backend.py; modes dense, codec_mv,
-codec_mv_hybrid, codec_mv_keep). --model nvila (default) is the path above.
+--model qwen3_5 / nemotron_omni / nemotron_super serve Qwen3.5-9B /
+Nemotron-3-Nano-Omni / Nemotron-3.5-Super-VL through AutoGaze's model_compat
+adapters instead (mc_backend.py; modes dense, codec_mv, codec_mv_hybrid,
+codec_mv_hybrid8, codec_mv_keep). --model nvila (default) is the path above.
+Super VL is split over every GPU in CUDA_VISIBLE_DEVICES; --device is not used for it.
 """
 import argparse
 import json
@@ -49,7 +51,7 @@ DEFAULT_RUNS_DIR = os.path.join(os.path.dirname(_PKG_ROOT), "runs")
 DEFAULT_CACHE_DIR = os.path.join(DEFAULT_RUNS_DIR, "cache")
 DEFAULT_TIMING_DIR = os.path.join(DEFAULT_RUNS_DIR, "timing")
 MODES = ("dense", "autogaze", "codec", "codec_nvdec", "codec_geo", "codec_ord", "autogaze_singlescale")
-MODELS = ("nvila", "qwen3_5", "nemotron_omni")
+MODELS = ("nvila", "qwen3_5", "nemotron_omni", "nemotron_super")
 CODEC_CACHE_ATTRS = ("CACHE_DIR", "NVDEC_CACHE_DIR", "HEVC_AUTOGAZE_CACHE_DIR")
 
 

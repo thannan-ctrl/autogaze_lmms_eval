@@ -57,7 +57,7 @@ sed -e "s#/home/scratch.thannan_wwfo/codec_reproduce#$WORK#g" -e "s#/home/thanna
 It has three layers:
 - `permissions.deny` blocks the agent's file-edit tool on those folders and its reads of result files (`RESULTS.md`, `SUMMARY.md`, lmms-eval results and samples, timing logs).
 - The sandbox is on and strict (`enabled`, `failIfUnavailable`, `allowUnsandboxedCommands: false`), and `sandbox.filesystem.denyWrite` covers the code, the docs, `.claude/`, `runs/`, `$HF_HOME` and the conda installs. Every shell command the agent runs, and everything it starts, therefore can't write there.
-- `sandbox.excludedCommands` lets exactly these run outside the sandbox: `sbatch <abs path>/scripts/run_eval.sbatch …`, the launcher and `tools/verify_alignment.sh` called by their absolute paths, and `squeue`/`sacct`. They're the only writers. They take a plain tag, write only into a new `runs/<tag>/`, load code only from the read-only trees, and lock their output.
+- `sandbox.excludedCommands` lets exactly these run outside the sandbox: `sbatch <abs path>/scripts/run_eval.sbatch …` (and `run_eval_super.sbatch …`), the launcher and `tools/verify_alignment.sh` called by their absolute paths, and `squeue`/`sacct`. They're the only writers. They take a plain tag, write only into a new `runs/<tag>/`, load code only from the read-only trees, and lock their output.
 
 `autoMode.hard_deny` repeats these rules in plain English so auto mode never approves a way around them.
 
@@ -107,7 +107,7 @@ curl -L -o /tmp/mf.sh https://github.com/conda-forge/miniforge/releases/latest/d
 bash /tmp/mf.sh -b -p $CONDA_BASE && eval "$($CONDA_BASE/bin/conda shell.bash hook)"
 
 # code at the exact commits used
-git clone git@github.com:thannan-ctrl/AutoGaze.git && git -C AutoGaze checkout 9899fd6829444fdd5ebc86366fd35073816ac635
+git clone git@github.com:thannan-ctrl/AutoGaze.git && git -C AutoGaze checkout 6ef73140f50b2aaf37222de6db9f722814356489
 git clone git@github.com:thannan-ctrl/autogaze_lmms_eval.git && git -C autogaze_lmms_eval checkout 6de3632ee2c38fce6824766cd9c635da6fd83e23
 git clone https://github.com/EvolvingLMMs-Lab/lmms-eval.git && git -C lmms-eval checkout d6cc2b567db7aeacbbf1af11b6595676e784d1d3
 cp -r /home/scratch.thannan_wwfo/codec_reproduce/{tools,envs,reference,LMMS_EVAL_BRIDGE.md} . && chmod -R u+w tools
@@ -115,7 +115,7 @@ cp -r /home/scratch.thannan_wwfo/codec_reproduce/{tools,envs,reference,LMMS_EVAL
 
 Keep all folders side by side in `$WORK`; results go to `$WORK/runs/`.
 
-AutoGaze `9899fd6` (branch `pareto/main`) adds `model_compat/` for step 8. Outside `model_compat/` it differs from the earlier pin `0234e8e` only in docs and figures, so steps 1–7 are unchanged.
+AutoGaze `6ef7314` (branch `pareto/main`) adds `model_compat/` for step 8. Outside `model_compat/` it differs from the earlier pin `0234e8e` only in docs and figures, so steps 1–7 are unchanged. `6ef7314` is `9899fd6` plus the Super VL adapter and multi-GPU timers; the rest of that change is off unless an `MC_*` variable turns it on, so the Qwen3.5 and Omni results (run at `9899fd6`) are unaffected.
 
 ## 3. Python environments
 
@@ -274,7 +274,7 @@ How to read it:
 | What | Where it comes from |
 |---|---|
 | A Slurm partition with an 80 GB H100, x86_64 | here: `H100_80G_HBM3_SXM_AMD_preprod` |
-| This repo, `AutoGaze` at `9899fd6` and `lmms-eval` at `d6cc2b5`, side by side in `$WORK` | step 2 |
+| This repo, `AutoGaze` at `6ef7314` and `lmms-eval` at `d6cc2b5`, side by side in `$WORK` | step 2 |
 | The EgoSchema videos in `$HF_HOME/egoschema/videos`, and a Hugging Face token that accepted the `lmms-lab/egoschema` terms | step 5 |
 | Qwen3.5-9B weights, revision `c202236235762e1c871ad0ccb60c8ee5ba337b9a` | step 5 (`hf download`) |
 | Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16 weights | step 5 (`hf download`, revision `e5e9932…`), plus `nvidia/C-RADIOv4-H` |
@@ -293,6 +293,20 @@ D=$(date +%Y%m%d_%H%M)
 sbatch $WORK/autogaze_lmms_eval/scripts/run_eval.sbatch --model qwen3_5 --dataset egoschema qwen3_5_egoschema_$D
 sbatch $WORK/autogaze_lmms_eval/scripts/run_eval.sbatch --model nemotron_omni --dataset egoschema nemotron_omni_egoschema_$D
 ```
+
+**Nemotron 3.5 Super VL** (120B-A12B, BF16) runs the same way with its own 4-GPU script:
+
+```bash
+sbatch $WORK/autogaze_lmms_eval/scripts/run_eval_super.sbatch --model nemotron_super --dataset egoschema nemotron_super_egoschema_$D
+```
+
+It follows the reference's Super VL sweep (`AutoGaze/RESULTS_LOG.md`, "Super VL (4x H100)"):
+- 4× H100 80 GB on `dgxh100`, 480 GB RAM;
+- the `nemo-super` venv (`/home/scratch.thannan_wwfo/model_compat/envs/nemo-super`: nemo-omni plus transformers 5.12.1 and accelerate 1.15.0);
+- 64 frames at 675 patches;
+- settings `dense` and `codec_mv_hybrid8` (one full frame pair per 8 frames, top 12% elsewhere: Super VL's recommended point).
+
+Its 232 GB of weights don't fit on the shared filesystem, so the job downloads them at revision `fb0ee0b` to the node's local `/tmp` (about 6 minutes) and deletes them when it ends. It needs AutoGaze at `6ef7314`, which adds the Super VL adapter and multi-GPU timers. The reference values for Super VL are on 4 GPUs, so its times aren't comparable with the 1-GPU models.
 
 **Read the result** in `runs/<tag>/SUMMARY.md`. A job that worked ends its log (`runs/_slurm/run_eval_<jobid>.log`) with `[run_eval] … done`, and exits 0.
 
