@@ -88,7 +88,7 @@ sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run
 
 No `sbatch` options are allowed, so each job runs on the partition written in its script:
 - Qwen and Omni: `H100_80G_HBM3_SXM_AMD_preprod` (H100 SXM, like the reference);
-- Super VL: `dgxh100`.
+- Super VL: `dgxh100_preprod` (one DGX H100, same GPUs as `dgxh100`).
 
 To use a different partition, change the script in dev mode, commit and push it, then switch.
 You read the `runs/<tag>/SUMMARY.md` files yourself.

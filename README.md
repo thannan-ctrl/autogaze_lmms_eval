@@ -301,7 +301,7 @@ sbatch $WORK/autogaze_lmms_eval/scripts/run_eval_super.sbatch --model nemotron_s
 ```
 
 It follows the reference's Super VL sweep (`AutoGaze/RESULTS_LOG.md`, "Super VL (4x H100)"):
-- 4× H100 80 GB on `dgxh100`, 480 GB RAM, as the reference (`H100x8` nodes don't mount the scratch filesystem);
+- 4× H100 SXM 80 GB on `dgxh100_preprod` (the same DGX H100 as the reference's `dgxh100`, whose queue was full), 480 GB RAM (`H100x8` nodes don't mount the scratch filesystem);
 - the `nemo-super` venv (`/home/scratch.thannan_wwfo/model_compat/envs/nemo-super`: nemo-omni plus transformers 5.12.1 and accelerate 1.15.0);
 - 64 frames at 675 patches;
 - settings `dense` and `codec_mv_hybrid8` (one full frame pair per 8 frames, top 12% elsewhere: Super VL's recommended point).
