@@ -7,7 +7,7 @@
 # Usage (from anywhere; the agent is allowed exactly this form):
 #   sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_eval_super.sbatch \
 #       --model nemotron_super --dataset egoschema [--smoke-only] <tag>
-#SBATCH --partition=dgxh100
+#SBATCH --partition=H100x8
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=48
 #SBATCH --mem=480G
