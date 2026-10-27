@@ -7,7 +7,9 @@
 # Usage (from anywhere; the agent is allowed exactly this form):
 #   sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_eval_super.sbatch \
 #       --model nemotron_super --dataset egoschema [--smoke-only] <tag>
-#SBATCH --partition=H100x8
+# dgxh100 nodes mount /home/scratch.thannan_wwfo (code, envs, videos, this log); H100x8 nodes don't,
+# so a job there dies before writing any log (job 2881089, checked with srun on 4u8g-gen-0082).
+#SBATCH --partition=dgxh100
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=48
 #SBATCH --mem=480G
