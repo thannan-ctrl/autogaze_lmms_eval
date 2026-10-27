@@ -76,6 +76,12 @@ frames; if it does not, record that and drop the arm.
 
 - At most 4 GPUs of each type in use at once (≤4 H100 for Qwen, ≤4 GB200 for NVILA).
 - Shard items across jobs, never arms. One job loads each arm in turn on its GPU.
+- Staged data (amended 2026-10-27; the 8 new benchmarks are ~745 GB of HF repos, 361 GB free):
+  Phase 2 runs one benchmark at a time: lmms-eval downloads it during the first dev smoke run
+  (Qwen first, NVILA after, never two downloads of one task at once) → full main grid of both
+  models in run mode → the human deletes that benchmark's videos. Order: egoschema_subset (on disk),
+  tempcompass_multi_choice, nextqa_mc_test, lvbench, perceptiontest_val_mc, longvideobench_val_v,
+  mlvu_dev, then mvbench and videomme, which stay on disk for Phases 3-4 at the end.
 - Order: Phase 1 → 2 → 3 → 4. Before any full run of a benchmark, its arms pass a 20-question
   smoke run (`dev_` tag): no bridge errors, every response parsed by the lmms-eval scorer, token
   counts and selector path logged.
