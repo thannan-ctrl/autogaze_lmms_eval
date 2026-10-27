@@ -9,8 +9,8 @@
 #   sbatch .../autogaze_lmms_eval/scripts/run_ext_gb200.sbatch --model nvila   --task <task> --arms <set> [--smoke-only] <tag>
 # This file asks Slurm for one H100 (Qwen3.5-9B); run_ext_gb200.sbatch asks for one GB200 (NVILA) and runs this file.
 #
-# Tasks (EXTENSION_SPEC.md section 4): egoschema_subset videomme lvbench mlvu_dev longvideobench_val_v mvbench
-#   tempcompass_multi_choice nextqa_mc_test perceptiontest_val_mc
+# Tasks (EXTENSION_SPEC.md section 4): egoschema_subset videomme lvbench mvbench tempcompass_multi_choice
+#   nextqa_mc_test perceptiontest_val_mc
 # Arm sets (section 5; F = 128 frames for qwen3_5, 16 for nvila):
 #   main         dense + recommended codec_mv_f1.0_c16_r0.25 (= codec_mv_hybrid)
 #   main_pxrepro qwen3_5, videomme only: main at the reproduction's resolution (MC_QWEN_MAX_PIXELS=4294967296)
@@ -36,7 +36,7 @@ WARMUP_VIDEO=$HF_HOME/egoschema/videos/001934bb-81bd-4cd8-a574-0472ef3f6678.mp4 
 SMOKE_N=8
 EXT_BRANCH=extension/pooling-nvila
 PIN_LMMS_EVAL=d6cc2b567db7aeacbbf1af11b6595676e784d1d3
-TASKS="egoschema_subset videomme lvbench mlvu_dev longvideobench_val_v mvbench tempcompass_multi_choice nextqa_mc_test perceptiontest_val_mc"
+TASKS="egoschema_subset videomme lvbench mvbench tempcompass_multi_choice nextqa_mc_test perceptiontest_val_mc"
 GRID=""
 for f in 0.5 1.0; do for c in 8 16; do for r in 0.12 0.25; do GRID="$GRID codec_mv_f${f}_c${c}_r${r}"; done; done; done
 
