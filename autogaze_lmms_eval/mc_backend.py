@@ -17,11 +17,14 @@ changed at runtime from here, both so lmms-eval stays the judge:
   * max_new_tokens: taken from each request instead of the adapter's constant 8.
 
 Modes (names only, since lmms-eval model_args cannot carry `@k=v`) map to
-model_compat arm specs, see ARM_FOR_MODE.
+model_compat arm specs, see ARM_FOR_MODE and arm_for_mode: besides the named
+ones, codec_mv_f<first>_c<chunk>_r<rest>[_p<pool>] is
+codec@first=<first>@chunk=<chunk>@rest=<rest>[@pool=<pool>].
 """
 import importlib
 import json
 import os
+import re
 import platform
 import shutil
 import sys
@@ -35,6 +38,19 @@ ARM_FOR_MODE = {
     "codec_mv_hybrid8": "codec@first=1.0@chunk=8@rest=0.12",     # Super VL's recommended strict-L1 point
     "codec_mv_keep": "codec@first=0.6@rest=0.25",
 }
+HYBRID_MODE = re.compile(r"codec_mv_f([0-9.]+)_c([0-9]+)_r([0-9.]+)(?:_p(max|mean|first))?")
+
+
+def arm_for_mode(mode: str):
+    """Mode name -> model_compat arm spec, or None if the mode is unknown."""
+    if mode in ARM_FOR_MODE:
+        return ARM_FOR_MODE[mode]
+    m = HYBRID_MODE.fullmatch(mode)
+    if not m:
+        return None
+    return f"codec@first={m[1]}@chunk={m[2]}@rest={m[3]}" + (f"@pool={m[4]}" if m[4] else "")
+
+
 MODELS = ("qwen3_5", "nemotron_omni", "nemotron_super")
 DEFAULT_MODEL_PATH = {
     "qwen3_5": "Qwen/Qwen3.5-9B",
@@ -74,8 +90,9 @@ class MCRunner:
         mc_root = mc_root or repo_dir
         if model not in MODELS:
             raise ValueError(f"unknown model {model!r}, expected one of {MODELS}")
-        if mode not in ARM_FOR_MODE:
-            raise ValueError(f"mode {mode!r} is not available for {model}; expected one of {sorted(ARM_FOR_MODE)}")
+        if arm_for_mode(mode) is None:
+            raise ValueError(f"mode {mode!r} is not available for {model}; expected one of {sorted(ARM_FOR_MODE)} "
+                             "or codec_mv_f<first>_c<chunk>_r<rest>[_p<pool>]")
         if not os.path.isdir(os.path.join(mc_root, "model_compat")):
             raise FileNotFoundError(f"no model_compat package under {mc_root}: check out AutoGaze commit 6ef7314 "
                                     "(branch pareto/main) or pass --mc-root")
@@ -103,7 +120,7 @@ class MCRunner:
         self.adapter_mod = importlib.import_module(f"model_compat.adapters.{model}")
         self.model = model
         self.mode = mode
-        self.arm = ARM_FOR_MODE[mode]
+        self.arm = arm_for_mode(mode)
         self.nvf = nvf
         self.device = device
         self.mc_root = mc_root

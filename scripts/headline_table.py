@@ -3,9 +3,13 @@
 
 Usage: python headline_table.py <runs/<tag>> [mode ...]
 
-Accuracy comes from lmms-eval's logged samples (score.pred == score.ground_truth,
-as egoschema_aggregate_score computes it). Timing comes from the server's
-per-request log (timing_<mode>.jsonl), joined to the samples on meta.doc_id.
+The lmms-eval task is read from the run's run_info.txt (task=..., default
+egoschema_subset); a group task (e.g. mvbench) has one samples file per subtask,
+and rows are keyed by (subtask, doc_id). Accuracy comes from lmms-eval's logged
+samples (score.pred == score.ground_truth, as egoschema_aggregate_score computes
+it) and is left out ("—") for tasks whose samples don't carry that field; their
+accuracy is lmms-eval's own results file. Timing comes from the server's
+per-request log (timing_<mode>.jsonl), joined to the samples on (meta.task, meta.doc_id).
 
 End-to-end cross-check: the reported e2e_ms comes from AutoGaze's (or
 model_compat's) own timers. The bridge measures the same questions twice with
@@ -23,9 +27,26 @@ import re
 import statistics
 import sys
 
-TASK = "egoschema_subset"
+TASK = "egoschema_subset"  # default when run_info.txt has no task= line
 MODES = ["codec_nvdec", "codec", "dense", "autogaze"]
-CODEC_MODES = {"codec", "codec_nvdec", "codec_geo", "codec_ord", "codec_mv", "codec_mv_hybrid", "codec_mv_hybrid8", "codec_mv_keep"}
+
+
+def is_codec(mode):
+    return mode.startswith("codec")
+
+
+def task_of(run_dir):
+    info = os.path.join(run_dir, "run_info.txt")
+    if os.path.exists(info):
+        m = re.search(r"\btask=(\S+)", open(info).read())
+        if m:
+            return m.group(1)
+    return TASK
+
+
+def in_task(name, task):
+    """name is the task itself or one of its subtasks (lmms-eval group members are named <group>_<sub>)."""
+    return name == task or name.startswith(task + "_")
 
 # Codec_Selector_Feasibility.md, Headline result (AutoGaze harness, commit cfa11e0,
 # job 2383304): accuracy %, tokens, then seconds.
@@ -38,17 +59,23 @@ HEADLINE = {
 
 
 def load_samples(run_dir, mode):
-    paths = glob.glob(os.path.join(run_dir, f"lmms_{mode}", "**", f"*samples_{TASK}.jsonl"), recursive=True)
+    task = task_of(run_dir)
+    paths = {}
+    for p in glob.glob(os.path.join(run_dir, f"lmms_{mode}", "**", f"*samples_{task}*.jsonl"), recursive=True):
+        name = re.search(r"samples_(.+)\.jsonl$", os.path.basename(p)).group(1)
+        if in_task(name, task):
+            if name in paths:
+                sys.exit(f"{mode}: more than one samples file for {name}, expected one per run: {paths[name]}, {p}")
+            paths[name] = p
     if not paths:
         return None
-    if len(paths) > 1:
-        sys.exit(f"{mode}: more than one samples file, expected one per run: {paths}")
     samples = {}
-    for line in open(paths[0]):
-        s = json.loads(line)
-        if s["doc_id"] in samples:
-            sys.exit(f"{mode}: duplicate doc_id {s['doc_id']} in {paths[0]}")
-        samples[s["doc_id"]] = s
+    for name, path in sorted(paths.items()):
+        for line in open(path):
+            s = json.loads(line)
+            if (name, s["doc_id"]) in samples:
+                sys.exit(f"{mode}: duplicate doc_id {s['doc_id']} in {path}")
+            samples[(name, s["doc_id"])] = s
     return samples
 
 
@@ -56,17 +83,19 @@ def load_timing(run_dir, mode):
     path = os.path.join(run_dir, f"timing_{mode}.jsonl")
     if not os.path.exists(path):
         return None
+    task = task_of(run_dir)
     rows = {}
     for line in open(path):
         r = json.loads(line)
         meta = r.get("meta") or {}
-        if meta.get("task") != TASK:
-            sys.exit(f"{mode}: timing row {r['request_idx']} is for task {meta.get('task')!r}, not {TASK}")
+        if not in_task(meta.get("task") or "", task):
+            sys.exit(f"{mode}: timing row {r['request_idx']} is for task {meta.get('task')!r}, not {task}")
         if r["mode"] != mode:
             sys.exit(f"{mode}: timing row {r['request_idx']} was served in mode {r['mode']!r}")
-        if meta["doc_id"] in rows:
-            sys.exit(f"{mode}: duplicate doc_id {meta['doc_id']} in {path} (server restarted into the same log?)")
-        rows[meta["doc_id"]] = r
+        key = (meta["task"], meta["doc_id"])
+        if key in rows:
+            sys.exit(f"{mode}: duplicate doc_id {key} in {path} (server restarted into the same log?)")
+        rows[key] = r
     return rows
 
 
@@ -74,14 +103,16 @@ def load_client(run_dir, mode):
     path = os.path.join(run_dir, f"client_timing_{mode}.jsonl")
     if not os.path.exists(path):
         return None
+    task = task_of(run_dir)
     rows = {}
     for line in open(path):
         r = json.loads(line)
-        if r["meta"].get("task") != TASK:
+        if not in_task(r["meta"].get("task") or "", task):
             continue
-        if r["meta"]["doc_id"] in rows:
-            sys.exit(f"{mode}: duplicate doc_id {r['meta']['doc_id']} in {path}")
-        rows[r["meta"]["doc_id"]] = r["client_roundtrip_ms"]
+        key = (r["meta"]["task"], r["meta"]["doc_id"])
+        if key in rows:
+            sys.exit(f"{mode}: duplicate doc_id {key} in {path}")
+        rows[key] = r["client_roundtrip_ms"]
     return rows
 
 
@@ -107,11 +138,12 @@ def has_letter(reply):
 
 def summarize(mode, samples, timing, client=None):
     n = len(samples)
-    correct = sum(str(s["score"]["pred"]) == str(s["score"]["ground_truth"]) for s in samples.values())
+    scored = all(isinstance(s.get("score"), dict) and {"pred", "ground_truth"} <= set(s["score"]) for s in samples.values())
+    correct = sum(str(s["score"]["pred"]) == str(s["score"]["ground_truth"]) for s in samples.values()) if scored else None
     replies = [reply_of(s) for s in samples.values()]
     out = {
         "n": n,
-        "acc": 100.0 * correct / n,
+        "acc": 100.0 * correct / n if scored else None,
         "bare_letter": sum(bool(re.fullmatch(r"\s*\(?[A-E]\)?[.:]?\s*", r)) for r in replies),
         "no_letter": sum(not has_letter(r) for r in replies),
     }
@@ -133,7 +165,7 @@ def summarize(mode, samples, timing, client=None):
         llm=mean("llm_ms") / 1000,
         e2e=mean("e2e_ms") / 1000,
     )
-    if mode in CODEC_MODES:
+    if is_codec(mode):
         out.update(selector=mean("selector_wait_ms") / 1000, selector_total=mean("selector_wall_ms") / 1000)
     elif mode.startswith("autogaze"):
         out.update(selector=mean("autogaze_model_ms") / 1000, selector_total=None)
@@ -171,6 +203,10 @@ def fmt_n(x):
     return "—" if x is None else f"{x:,.0f}"
 
 
+def fmt_acc(x):
+    return "—" if x is None else f"{x:.1f}%"
+
+
 def fmt_s(x):
     return "—" if x is None else f"{x:.2f} s"
 
@@ -204,7 +240,7 @@ def main():
     for mode in args.modes:
         samples = load_samples(args.run_dir, mode)
         if samples is None:
-            print(f"[{mode}] no {TASK} samples file under {args.run_dir}/lmms_{mode}, skipped", file=sys.stderr)
+            print(f"[{mode}] no {task_of(args.run_dir)} samples file under {args.run_dir}/lmms_{mode}, skipped", file=sys.stderr)
             continue
         results[mode] = summarize(mode, samples, load_timing(args.run_dir, mode), load_client(args.run_dir, mode))
     if not results:
@@ -218,15 +254,15 @@ def main():
         m = re.search(r"^model=(\S+)", text, re.M)
         model = m.group(1) if m else model
 
-    print("**This run** (lmms-eval `egoschema_subset` through the bridge). Mean seconds per question.\n")
+    print(f"**This run** (lmms-eval `{task_of(args.run_dir)}` through the bridge). Mean seconds per question.\n")
     print("| Mode | N | Accuracy | Tokens | Visual tokens | Preproc (incl. selector) | of which selector | ViT | LLM | **E2E** |")
     print("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
     for mode, d in results.items():
         if "e2e" in d:
-            print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | {d['tokens']:,.0f} | {fmt_n(d.get('visual'))} | {d['preproc']:.2f} s | {fmt_selector(d)} "
+            print(f"| {mode} | {d['n']} | {fmt_acc(d['acc'])} | {d['tokens']:,.0f} | {fmt_n(d.get('visual'))} | {d['preproc']:.2f} s | {fmt_selector(d)} "
                   f"| {d['vit']:.2f} s | {d['llm']:.2f} s | **{d['e2e']:.2f} s** |")
         else:
-            print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | (no timing log) | | | | | | |")
+            print(f"| {mode} | {d['n']} | {fmt_acc(d['acc'])} | (no timing log) | | | | | | |")
 
     print("\n**End-to-end latency cross-check.** Mean seconds per question. *Reported*: `e2e_ms` from the "
           "repo's own timers (the E2E column above). *Sum of parts*: preproc + ViT + LLM as reported. "
@@ -243,7 +279,7 @@ def main():
         print(f"| {mode} | {d['e2e']:.2f} s | {d['parts']:.2f} s | {fmt_s(d.get('server'))} | {fmt_s(d.get('client'))} "
               f"| {fmt_s(d.get('untimed'))} | {fmt_s(d.get('gap_mean'))} | {fmt_s(d.get('gap_p95'))} | {e2e_check(d)} |")
 
-    if model == "nvila":
+    if model == "nvila" and task_of(args.run_dir) == TASK:
         print("\n**Headline** (AutoGaze harness, `Codec_Selector_Feasibility.md`), and the difference (this run − headline).\n")
         print("| Mode | Accuracy | Tokens | Preproc | of which selector | ViT | LLM | **E2E** | ΔAcc (pts) | ΔE2E |")
         print("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
@@ -252,7 +288,7 @@ def main():
               "on branch pareto/main for the H100 model_compat numbers.)")
     for mode, d in results.items():
         h = HEADLINE.get(mode)
-        if h is None or model != "nvila":
+        if h is None or model != "nvila" or task_of(args.run_dir) != TASK:
             continue
         d_e2e = f"{d['e2e'] - h['e2e']:+.2f} s" if "e2e" in d else ""
         print(f"| {mode} | {h['acc']:.1f}% | {h['tokens']:,} | {h['preproc']:.2f} s | {fmt_selector(h)} | {h['vit']:.2f} s "

@@ -12,6 +12,9 @@
 #                         downloads and unzips lmms-lab/egoschema into
 #                         $HF_HOME/egoschema exactly once. Run this first.
 #   --limit N             pass --limit N to lmms-eval (smoke test)
+#   --task T              lmms-eval task (default egoschema_subset). Other tasks
+#                         download their own videos through lmms-eval; the
+#                         EgoSchema download/warmup checks apply to egoschema* only
 #   --modes "M1 M2 ..."   default: "dense autogaze codec codec_nvdec"
 #   --gpus "G1 G2 ..."    GPU index per mode, same order (default: 0 1 2 ...). An
 #                         entry may be a comma list ("0,1,2,3"): that server sees all
@@ -29,7 +32,9 @@
 #   --model M             nvila (default) | qwen3_5 | nemotron_omni | nemotron_super.
 #                         The last three run AutoGaze's model_compat adapters (modes
 #                         dense, codec_mv, codec_mv_hybrid, codec_mv_hybrid8,
-#                         codec_mv_keep; see mc_backend.py)
+#                         codec_mv_keep, codec_mv_f<first>_c<chunk>_r<rest>[_p<pool>];
+#                         see mc_backend.py). nvila adds codec_mv and
+#                         codec_mv_f<first>_c<chunk>_r<rest> (H.264 MV backend)
 #   --nvf N               frames per video (default 16; RESULTS_LATENCY_ACCURACY.md
 #                         recommends 128 for qwen3_5, 64 for nemotron_omni and
 #                         nemotron_super)
@@ -95,6 +100,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --download-only) DOWNLOAD_ONLY=1 ;;
     --limit) LIMIT=$2; shift ;;
+    --task) TASK=$2; shift ;;
     --modes) MODES=$2; shift ;;
     --gpus) GPUS=$2; shift ;;
     --warmup-video) WARMUP_VIDEO=$2; shift ;;
@@ -182,14 +188,15 @@ if [ "$MODEL" != nvila ]; then
   for m in "${MODE_ARR[@]}"; do
     case "$m" in
       dense|codec_mv|codec_mv_hybrid|codec_mv_hybrid8|codec_mv_keep) ;;
-      *) die "mode $m is not available for $MODEL (dense, codec_mv, codec_mv_hybrid, codec_mv_hybrid8, codec_mv_keep)" ;;
+      *) [[ "$m" =~ ^codec_mv_f[0-9.]+_c[0-9]+_r[0-9.]+(_p(max|mean|first))?$ ]] \
+           || die "mode $m is not available for $MODEL (dense, codec_mv, codec_mv_hybrid, codec_mv_hybrid8, codec_mv_keep, codec_mv_f<first>_c<chunk>_r<rest>[_p<pool>])" ;;
     esac
   done
 fi
 for m in "${MODE_ARR[@]}"; do
   [ "$MODEL" = nvila ] || break
   case "$m" in
-    codec|codec_nvdec|codec_geo|codec_ord)
+    codec|codec_nvdec|codec_geo|codec_ord|codec_mv|codec_mv_f*)
       # Without these the codec selector silently falls back to slower paths
       # (or fails), so latency would not be comparable.
       native="${MC_NATIVE_BUILD:-$REPO_DIR/native/build_$(uname -m)}"
@@ -200,8 +207,11 @@ for m in "${MODE_ARR[@]}"; do
 done
 [ -z "$WARMUP_VIDEO" ] || [ -f "$WARMUP_VIDEO" ] || die "warmup video not found: $WARMUP_VIDEO"
 
+[[ "$TASK" =~ ^[a-z0-9_]+$ ]] || die "--task must be an lmms-eval task name: $TASK"
 EGO_DIR="$HF_HOME/egoschema"
-if [ "$DOWNLOAD_ONLY" = 1 ]; then
+if [[ "$TASK" != egoschema* ]]; then
+  [ "$DOWNLOAD_ONLY" = 0 ] || die "--download-only is for EgoSchema; other tasks download through lmms-eval"
+elif [ "$DOWNLOAD_ONLY" = 1 ]; then
   if [ -d "$EGO_DIR" ]; then
     die "$EGO_DIR already exists ($(find "$EGO_DIR" -name '*.mp4' | wc -l) mp4s); lmms-eval will not download again. If it is half-filled from an interrupted unzip, delete it and re-run."
   fi

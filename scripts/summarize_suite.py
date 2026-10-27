@@ -87,7 +87,7 @@ def main():
         model, nvf = info.get("model", "?"), int(info.get("nvf", "0") or 0)
         gpus = info.get("gpus", "?")
         where = "one GPU" if "," not in gpus else f"the same {gpus.count(',') + 1} GPUs"
-        print(f"## {stage}: {model}, {nvf} frames, lmms-eval `{ht.TASK}`, arms one after another on {where}\n")
+        print(f"## {stage}: {model}, {nvf} frames, lmms-eval `{info.get('task', ht.TASK)}`, arms one after another on {where}\n")
         for mode in arms:
             text, _ = read_info(os.path.join(stage_dir, mode))
             print(f"<details><summary>run_info.txt ({mode})</summary>\n\n```\n{text.rstrip()}\n```\n</details>\n")
@@ -98,9 +98,9 @@ def main():
             if d is None:
                 print(f"| {mode} | missing | | | | | | | | | | | | |")
             elif "e2e" not in d:
-                print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | (no timing log) | | | | | | | | | | {d['no_letter']} |")
+                print(f"| {mode} | {d['n']} | {ht.fmt_acc(d['acc'])} | (no timing log) | | | | | | | | | | {d['no_letter']} |")
             else:
-                print(f"| {mode} | {d['n']} | {d['acc']:.1f}% | {d['tokens']:,.0f} | {ht.fmt_n(d.get('visual'))} | {d['preproc']:.2f} s "
+                print(f"| {mode} | {d['n']} | {ht.fmt_acc(d['acc'])} | {d['tokens']:,.0f} | {ht.fmt_n(d.get('visual'))} | {d['preproc']:.2f} s "
                       f"| {ht.fmt_selector(d)} | {d['vit']:.2f} s | {d['llm']:.2f} s | **{d['e2e']:.2f} s** "
                       f"| {ht.fmt_s(d.get('server'))} | {ht.fmt_s(d.get('client'))} | {ht.e2e_check(d)} "
                       f"| {d['no_letter']}/{d['n']} |")
@@ -114,7 +114,7 @@ def main():
             for mode, d in res.items():
                 if mode in ref:
                     s_, acc, tok = ref[mode]
-                    diff = f"{d['acc'] - acc:+.1f}" if d else "—"
+                    diff = f"{d['acc'] - acc:+.1f}" if d and d["acc"] is not None else "—"
                     print(f"| {mode} | {s_:.2f} s | {acc:.1f}% | {tok:,} | {diff} |")
         print()
         for mode, d in res.items():

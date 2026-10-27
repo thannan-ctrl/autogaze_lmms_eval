@@ -31,12 +31,16 @@ default, computes prefill logits for the last position only.
 --model qwen3_5 / nemotron_omni / nemotron_super serve Qwen3.5-9B /
 Nemotron-3-Nano-Omni / Nemotron-3.5-Super-VL through AutoGaze's model_compat
 adapters instead (mc_backend.py; modes dense, codec_mv, codec_mv_hybrid,
-codec_mv_hybrid8, codec_mv_keep). --model nvila (default) is the path above.
+codec_mv_hybrid8, codec_mv_keep, codec_mv_f<first>_c<chunk>_r<rest>[_p<pool>]).
+--model nvila (default) is the path above; its codec_mv and
+codec_mv_f<first>_c<chunk>_r<rest> modes score with model_compat's H.264
+motion-vector selector (AutoGaze scripts/breakdown/codec_selector.py, backend "mv").
 Super VL is split over every GPU in CUDA_VISIBLE_DEVICES; --device is not used for it.
 """
 import argparse
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -50,7 +54,8 @@ DEFAULT_REPO_DIR = "/home/thannan/scratch/codec_reproduce/AutoGaze"
 DEFAULT_RUNS_DIR = os.path.join(os.path.dirname(_PKG_ROOT), "runs")
 DEFAULT_CACHE_DIR = os.path.join(DEFAULT_RUNS_DIR, "cache")
 DEFAULT_TIMING_DIR = os.path.join(DEFAULT_RUNS_DIR, "timing")
-MODES = ("dense", "autogaze", "codec", "codec_nvdec", "codec_geo", "codec_ord", "autogaze_singlescale")
+MODES = ("dense", "autogaze", "codec", "codec_nvdec", "codec_geo", "codec_ord", "autogaze_singlescale", "codec_mv")
+NVILA_HYBRID_MODE = re.compile(r"codec_mv_f[0-9.]+_c[0-9]+_r[0-9.]+")  # registered by AutoGaze's breakdown.config
 MODELS = ("nvila", "qwen3_5", "nemotron_omni", "nemotron_super")
 CODEC_CACHE_ATTRS = ("CACHE_DIR", "NVDEC_CACHE_DIR", "HEVC_AUTOGAZE_CACHE_DIR")
 
@@ -283,7 +288,9 @@ def main() -> None:
                     help="non-nvila models: checkout holding model_compat (default: --repo-dir)")
     ap.add_argument("--model-path", default=None,
                     help="non-nvila models: local weights dir or hub id (default: mc_backend.DEFAULT_MODEL_PATH)")
-    ap.add_argument("--mode", default="autogaze", choices=MODES + tuple(m for m in mc_backend.ARM_FOR_MODE if m not in MODES))
+    ap.add_argument("--mode", default="autogaze",
+                    help=f"nvila: {', '.join(MODES)}, codec_mv_f<first>_c<chunk>_r<rest>; other models: "
+                         f"{', '.join(mc_backend.ARM_FOR_MODE)}, codec_mv_f<first>_c<chunk>_r<rest>[_p<pool>]")
     ap.add_argument("--nvf", type=int, default=16, help="number of video frames (FIXED_NUM_VIDEO_FRAMES)")
     ap.add_argument("--max-batch-size-autogaze", type=int, default=64)
     ap.add_argument("--device", default="cuda:0")
@@ -300,8 +307,8 @@ def main() -> None:
 
     timing_log = args.timing_log or os.path.join(DEFAULT_TIMING_DIR, f"{args.mode}_nvf{args.nvf}.jsonl")
     if args.model == "nvila":
-        if args.mode not in MODES:
-            ap.error(f"--mode {args.mode} needs a non-nvila --model")
+        if args.mode not in MODES and not NVILA_HYBRID_MODE.fullmatch(args.mode):
+            ap.error(f"--mode {args.mode} is not an nvila mode")
         runner = AutoGazeRunner(
             args.repo_dir, args.mode, args.nvf, args.max_batch_size_autogaze, args.device, args.cache_dir,
             timing_log, full_seq_logits=args.full_seq_logits,
