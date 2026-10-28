@@ -7,9 +7,20 @@ Qwen3.5-9B, H100 (3 jobs, all at once):
   sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_ext.sbatch --model qwen3_5 --task lvbench --arms main --shard 0/2 ext_qwen3_5_lvbench_main_s0of2_20261029
   sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_ext.sbatch --model qwen3_5 --task lvbench --arms main --shard 1/2 ext_qwen3_5_lvbench_main_s1of2_20261029
 
-NVILA, GB200 (1 job now): gate 1b.
+NVILA, GB200: gate 1b first, then the 7 NExT-QA shards.
   sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_ext_gb200.sbatch --model nvila --task egoschema_subset --arms gate ext_nvila_egoschema_gate_20261029
-Do NOT submit any NVILA main runs. I judge gate 1b from its SUMMARY.md myself and will tell you whether NVILA continues.
+Then the NExT-QA main grid in 7 shards (shard I of 7 = questions I*1224 onward, the last runs to the end). Submit shards 0-2
+together with the gate (4 GB200), and each further shard only when one of your GB200 jobs has finished, so at most
+4 GB200 jobs are queued or running at any time:
+  sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_ext_gb200.sbatch --model nvila --task nextqa_mc_test --arms main --shard 0/7 ext_nvila_nextqa_main_s0of7_20261029
+  sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_ext_gb200.sbatch --model nvila --task nextqa_mc_test --arms main --shard 1/7 ext_nvila_nextqa_main_s1of7_20261029
+  sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_ext_gb200.sbatch --model nvila --task nextqa_mc_test --arms main --shard 2/7 ext_nvila_nextqa_main_s2of7_20261029
+  sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_ext_gb200.sbatch --model nvila --task nextqa_mc_test --arms main --shard 3/7 ext_nvila_nextqa_main_s3of7_20261029
+  sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_ext_gb200.sbatch --model nvila --task nextqa_mc_test --arms main --shard 4/7 ext_nvila_nextqa_main_s4of7_20261029
+  sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_ext_gb200.sbatch --model nvila --task nextqa_mc_test --arms main --shard 5/7 ext_nvila_nextqa_main_s5of7_20261029
+  sbatch /home/scratch.thannan_wwfo/codec_reproduce/autogaze_lmms_eval/scripts/run_ext_gb200.sbatch --model nvila --task nextqa_mc_test --arms main --shard 6/7 ext_nvila_nextqa_main_s6of7_20261029
+Do NOT submit any other NVILA main runs (egoschema_subset, lvbench). I judge gate 1b from its SUMMARY.md myself and
+will tell you whether NVILA continues. If I tell you NVILA stops, submit no further NExT-QA shards.
 
 Not in this wave: Qwen nextqa_mc_test (its smoke gate fails by design of the default prompt; decision pending), mvbench and videomme (not downloaded).
 
@@ -18,7 +29,7 @@ How to submit and watch
 - Slurm read commands (`squeue --me`, `sacct -j <ids> -X --format=JobID,State,ExitCode,Elapsed`) also only work as bare single commands. Never wrap them in loops or scripts.
 - Watch by reading runs/_slurm/run_ext_<jobid>.log, runs/<tag>/preflight.txt and runs/<tag>/{smoke,full}/<arm>/logs/. Don't check more often than every 10 minutes. A full EgoSchema job takes about 1-2 h, an LVBench shard several hours; the 8 h limit applies.
 - Success = job COMPLETED, exit 0, `[run_ext] ... done:` in the job log and every `[status]` line ending in "replies ok".
-- At most 4 GPUs of each type in use at once (this wave uses 3 H100 + 1 GB200).
+- At most 4 GPUs of each type in use at once (this wave: 3 H100; GB200 up to 4 at a time over 8 jobs).
 
 Gate 1a, EgoSchema half (CPU, on this node, no Slurm), in your session scratchpad $S:
   mkdir -p $S/repro_pin $S/selcache
@@ -48,7 +59,7 @@ Ground rules (enforced by your sandbox and permissions; don't test them)
 - Your own files go in your session scratchpad only.
 
 What to give me at the end, and nothing more
-- For each job: tag, job id, the exact sbatch command, final state and exit code, path runs/<tag>/SUMMARY.md.
+- For each job (11 in total: 3 Qwen, the gate, 7 NExT-QA shards): tag, job id, the exact sbatch command, final state and exit code, path runs/<tag>/SUMMARY.md.
 - The first two lines of each runs/<tag>/preflight.txt (settings and shard) and any FAIL lines.
 - Gate 1a compare output.
 - Anything that failed or looked off, with the relevant log lines (no result numbers), and any abandoned tags.
