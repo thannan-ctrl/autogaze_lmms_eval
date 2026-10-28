@@ -144,7 +144,7 @@ cat "$PRE"
 [ "$fail" = 0 ] || die "preflight failed (see $PRE); nothing was run"
 
 GPU=$(echo "${CUDA_VISIBLE_DEVICES:-0}" | cut -d, -f1)
-BASE_PORT=$((20000 + (${SLURM_JOB_ID:-$$} % 4000) * 4))
+BASE_PORT=$((20000 + ((${SLURM_JOB_ID:-$$} + ${SLURM_STEP_ID:-0} * 1009) % 4000) * 4))  # step id: srun steps sharing one allocation get distinct ports
 launch() {  # launch <stage> <mode> [extra launcher args...]: one arm, into runs/<tag>/<stage>/<mode>/
   mkdir -p "$SUITE/$1"
   local extra=(--mc-pythonpath "$MC_PYTHONPATH")
