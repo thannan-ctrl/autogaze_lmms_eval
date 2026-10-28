@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # EXTENSION_SPEC.md runs: one model x one lmms-eval task x one arm set through the AutoGaze bridge, end to end:
-# preflight, smoke (8 questions), gate, full run, SUMMARY.md, checksums, then runs/<tag>/ is made read-only.
+# preflight, smoke (20 questions), gate, full run, SUMMARY.md, checksums, then runs/<tag>/ is made read-only.
 # Same flow as run_eval.sbatch (the reproduction's script, left untouched), with the extension's code
 # (AutoGaze branch extension/pooling-nvila), tasks and arm sets.
 #
@@ -33,7 +33,7 @@ PKG=$WORK/autogaze_lmms_eval
 LAUNCHER=$PKG/scripts/run_egoschema_headline.sh
 HF_HOME=/home/scratch.thannan_wwfo/hf_cache
 WARMUP_VIDEO=$HF_HOME/egoschema/videos/001934bb-81bd-4cd8-a574-0472ef3f6678.mp4  # not in the EgoSchema subset
-SMOKE_N=8
+SMOKE_N=20
 EXT_BRANCH=extension/pooling-nvila
 PIN_LMMS_EVAL=d6cc2b567db7aeacbbf1af11b6595676e784d1d3
 TASKS="egoschema_subset videomme lvbench mvbench nextqa_mc_test"
