@@ -12,6 +12,8 @@
 #                         downloads and unzips lmms-lab/egoschema into
 #                         $HF_HOME/egoschema exactly once. Run this first.
 #   --limit N             pass --limit N to lmms-eval (smoke test)
+#   --offset N            pass --offset N to lmms-eval: start at this doc index of each
+#                         (sub)task; with --limit, one shard of the questions
 #   --task T              lmms-eval task (default egoschema_subset). Other tasks
 #                         download their own videos through lmms-eval; the
 #                         EgoSchema download/warmup checks apply to egoschema* only
@@ -83,6 +85,7 @@ SERVER_PY=""  # default: the server env's python
 
 DOWNLOAD_ONLY=0
 LIMIT=""
+OFFSET=0
 MODES="dense autogaze codec codec_nvdec"
 GPUS=""
 WARMUP_VIDEO=""
@@ -100,6 +103,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --download-only) DOWNLOAD_ONLY=1 ;;
     --limit) LIMIT=$2; shift ;;
+    --offset) OFFSET=$2; shift ;;
     --task) TASK=$2; shift ;;
     --modes) MODES=$2; shift ;;
     --gpus) GPUS=$2; shift ;;
@@ -153,6 +157,7 @@ if [ -n "$SERVER_PY" ]; then
   [ -x "$SERVER_PY" ] || die "--server-python is not executable: $SERVER_PY"
 fi
 [[ "$SERVER_ENV$CLIENT_ENV" =~ ^[A-Za-z0-9._-]+$ ]] || die "conda env names must be plain names: $SERVER_ENV $CLIENT_ENV"
+[[ "$OFFSET" =~ ^[0-9]+$ ]] || die "--offset must be a non-negative integer: $OFFSET"
 
 case "$MODEL" in
   nvila|qwen3_5|nemotron_omni|nemotron_super) ;;
@@ -252,7 +257,7 @@ print(urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/health", timeout=5
   echo "date=$(date -Is)"
   echo "host=$(hostname)"
   echo "slurm_job=${SLURM_JOB_ID:-}"
-  echo "modes=${MODES} gpus=${GPU_ARR[*]} limit=${LIMIT:-none} warmup_video=${WARMUP_VIDEO:-none} warmup_n=$WARMUP_N"
+  echo "modes=${MODES} gpus=${GPU_ARR[*]} limit=${LIMIT:-none} offset=$OFFSET warmup_video=${WARMUP_VIDEO:-none} warmup_n=$WARMUP_N"
   echo "model=$MODEL nvf=$NVF max_batch_size_autogaze=$MAX_BATCH_SIZE_AUTOGAZE task=$TASK"
   echo "autogaze_commit=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   if [ "$MODEL" != nvila ]; then
@@ -314,6 +319,7 @@ for i in "${!MODE_ARR[@]}"; do
         --model_args "server_url=http://127.0.0.1:$port,mode=$m,client_timing_log=$RUN_DIR/client_timing_$m.jsonl"
         --tasks "$TASK" --batch_size 1 --log_samples --output_path "$RUN_DIR/lmms_$m")
   [ -z "$LIMIT" ] || args+=(--limit "$LIMIT")
+  [ "$OFFSET" = 0 ] || args+=(--offset "$OFFSET")
   log "starting lmms-eval for $m"
   "${IN_ENV[@]}" "$CLIENT_ENV" python "${args[@]}" > "$RUN_DIR/logs/lmms_$m.log" 2>&1 &
   CLIENT_PIDS+=($!)

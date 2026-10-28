@@ -11,7 +11,7 @@ import headline_table as ht  # noqa: E402
 SAMPLES = "samples" + "_"
 
 
-def make_run(root, task, subtasks, mode, scored):
+def make_run(root, task, subtasks, mode, scored, docs=range(3)):
     run = root / mode
     out = run / f"lmms_{mode}" / "model"
     out.mkdir(parents=True)
@@ -19,7 +19,7 @@ def make_run(root, task, subtasks, mode, scored):
     timing, client, idx = [], [], 0
     for sub in subtasks:
         with open(out / f"2026_{SAMPLES}{sub}.jsonl", "w") as f:
-            for d in range(3):
+            for d in docs:
                 s = {"doc_id": d, "filtered_resps": ["A."]}
                 if scored:
                     s["score"] = {"pred": "A", "ground_truth": "A" if d else "B"}

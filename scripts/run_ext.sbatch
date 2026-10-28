@@ -5,8 +5,8 @@
 # (AutoGaze branch extension/pooling-nvila), tasks and arm sets.
 #
 # Usage:
-#   sbatch .../autogaze_lmms_eval/scripts/run_ext.sbatch       --model qwen3_5 --task <task> --arms <set> [--smoke-only] <tag>
-#   sbatch .../autogaze_lmms_eval/scripts/run_ext_gb200.sbatch --model nvila   --task <task> --arms <set> [--smoke-only] <tag>
+#   sbatch .../autogaze_lmms_eval/scripts/run_ext.sbatch       --model qwen3_5 --task <task> --arms <set> [--shard I/N] [--smoke-only] <tag>
+#   sbatch .../autogaze_lmms_eval/scripts/run_ext_gb200.sbatch --model nvila   --task <task> --arms <set> [--shard I/N] [--smoke-only] <tag>
 # This file asks Slurm for one H100 (Qwen3.5-9B); run_ext_gb200.sbatch asks for one GB200 (NVILA) and runs this file.
 #
 # Tasks (EXTENSION_SPEC.md section 4): egoschema_subset videomme lvbench mvbench
@@ -18,6 +18,11 @@
 #                nvila also its native HEVC selector (codec). videomme / mvbench only
 #   pool         qwen3_5: the 8 configs with pool mean and first. videomme / mvbench only
 #   gate         nvila, egoschema_subset, 16 frames: dense + native codec (Phase 1 adapter gate)
+# Sharding (section 6: items across jobs, never arms): --shard I/N (0 <= I < N) runs shard I of N contiguous slices
+# of the questions (lmms-eval --offset/--limit, per subtask for a group task), every arm of the set on it. Slices are
+# ceil(DOCS/N) questions, the last one runs to the end, so the N shards cover the task whatever its exact size. The smoke
+# stage runs the shard's first SMOKE_N questions. One tag per shard (e.g. <base>_s0of4 ...); merge the shards' full
+# stages with summarize_shards.py. Size N from smoke timing so a shard fits the 8 h limit with margin.
 # Resolution is each model's stock processor (Qwen: MC_QWEN_MAX_PIXELS=25165824, the stock per-video cap),
 # except main_pxrepro.
 #SBATCH --partition=H100_80G_HBM3_SXM_AMD_preprod
@@ -37,18 +42,21 @@ SMOKE_N=20
 EXT_BRANCH=extension/pooling-nvila
 PIN_LMMS_EVAL=d6cc2b567db7aeacbbf1af11b6595676e784d1d3
 TASKS="egoschema_subset videomme lvbench mvbench nextqa_mc_test"
+# Questions per task (per subtask for mvbench), for shard sizes only: lmms-eval datasets at their cached revisions.
+declare -A DOCS=([egoschema_subset]=500 [videomme]=2700 [lvbench]=1549 [mvbench]=200 [nextqa_mc_test]=8564)
 GRID=""
 for f in 0.5 1.0; do for c in 8 16; do for r in 0.12 0.25; do GRID="$GRID codec_mv_f${f}_c${c}_r${r}"; done; done; done
 
 die() { echo "[run_ext] ERROR: $*" >&2; exit 1; }
 log() { echo "[run_ext] $(date +%H:%M:%S) $*"; }
 
-MODEL="" TASK="" ARMS="" SMOKE_ONLY=0 TAG=""
+MODEL="" TASK="" ARMS="" SHARD="" SMOKE_ONLY=0 TAG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --model) MODEL=${2:-}; shift ;;
     --task) TASK=${2:-}; shift ;;
     --arms) ARMS=${2:-}; shift ;;
+    --shard) SHARD=${2:-}; shift ;;
     --smoke-only) SMOKE_ONLY=1 ;;
     -*) die "unknown option $1" ;;
     *) [ -z "$TAG" ] || die "more than one tag: $TAG $1"; TAG=$1 ;;
@@ -57,6 +65,16 @@ while [ $# -gt 0 ]; do
 done
 [[ " $TASKS " == *" $TASK "* ]] || die "--task must be one of: $TASKS"
 [[ "$TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "tag must be a plain name ([A-Za-z0-9._-]): '$TAG'"
+OFFSET=0 FULL_LIMIT=()  # whole task by default
+if [ -n "$SHARD" ]; then
+  [[ "$SHARD" =~ ^([0-9]+)/([0-9]+)$ ]] || die "--shard must be I/N, e.g. 0/4: '$SHARD'"
+  SI=$((10#${BASH_REMATCH[1]})) SN=$((10#${BASH_REMATCH[2]}))
+  [ "$SN" -ge 1 ] && [ "$SI" -lt "$SN" ] || die "--shard $SHARD: need 0 <= I < N"
+  SHARD_SIZE=$(( (DOCS[$TASK] + SN - 1) / SN ))
+  OFFSET=$((SI * SHARD_SIZE))
+  [ "$OFFSET" -lt "${DOCS[$TASK]}" ] || die "--shard $SHARD of $TASK (${DOCS[$TASK]} questions) would be empty; use a smaller N"
+  [ "$SI" = $((SN - 1)) ] || FULL_LIMIT=(--limit "$SHARD_SIZE")
+fi
 ablation_task() { [ "$TASK" = videomme ] || [ "$TASK" = mvbench ] || die "--arms $ARMS runs on videomme and mvbench only"; }
 
 MC_ENV=()  # extra MC_* exported to the servers (model_compat's setdefault lets them win)
@@ -106,6 +124,7 @@ chk() { if out=$("${@:2}" 2>&1); then echo "ok   $1 ${out:+($out)}"; else echo "
 inenv() { bash -c 'eval "$("$0"/bin/conda shell.bash hook)" && conda activate "$1" && shift && exec "$@"' "$CONDA_BASE" "$@"; }
 {
   echo "tag=$TAG model=$MODEL task=$TASK arms=$ARMS nvf=$NVF modes=$MODES smoke_n=$SMOKE_N smoke_only=$SMOKE_ONLY"
+  echo "shard=${SHARD:-none} offset=$OFFSET full_limit=${FULL_LIMIT[1]:-none}"
   echo "mc_env=${MC_ENV[*]:-none}"
   echo "host=$(hostname) slurm_job=${SLURM_JOB_ID:-none} date=$(date -Is) cuda_visible=${CUDA_VISIBLE_DEVICES:-unset}"
   echo "gpus=$(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | sort | uniq -c | tr -s ' ' | paste -sd';')"
@@ -150,7 +169,7 @@ launch() {  # launch <stage> <mode> [extra launcher args...]: one arm, into runs
   local extra=(--mc-pythonpath "$MC_PYTHONPATH")
   [ -z "$MODEL_PATH" ] || extra+=(--model-path "$MODEL_PATH")
   "$LAUNCHER" --model "$MODEL" --task "$TASK" --nvf "$NVF" --modes "$2" --gpus "$GPU" \
-    --base-port "$BASE_PORT" --warmup-video "$WARMUP_VIDEO" --server-env "$SERVER_ENV" \
+    --base-port "$BASE_PORT" --offset "$OFFSET" --warmup-video "$WARMUP_VIDEO" --server-env "$SERVER_ENV" \
     "${extra[@]}" --runs-dir "$SUITE/$1" "${@:3}" "$2"
 }
 gate() { grep -qx "\[status\] $2: timing ok, client log ok, e2e cross-check ok, replies ok" "$SUITE/$1/$2/logs/headline_table.log"; }
@@ -169,7 +188,7 @@ stage() {  # stage <stage> <die|warn> [extra launcher args...]: every arm, one a
 FAILED=0
 stage smoke die --limit "$SMOKE_N"
 log "smoke passed the gate"
-[ "$SMOKE_ONLY" = 1 ] || stage full warn
+[ "$SMOKE_ONLY" = 1 ] || stage full warn "${FULL_LIMIT[@]}"
 
 inenv "$CLIENT_ENV" python "$PKG/scripts/summarize_suite.py" "$SUITE" > "$SUITE/SUMMARY.md" 2> "$SUITE/summary.log" \
   || die "summarize_suite.py failed (see $SUITE/summary.log)"

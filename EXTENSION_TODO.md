@@ -31,11 +31,13 @@ Everything still open for `EXTENSION_SPEC.md`. F = 128 frames (Qwen3.5-9B, H100 
 
 ## Dev session (code and smoke only)
 
-- [ ] **Sharding by question in `run_ext.sbatch`** (spec section 6). Jobs are capped at 8 h. Estimates from NVILA
+- [x] **Sharding by question in `run_ext.sbatch`** (spec section 6). Done 2026-10-28: `--shard I/N` (lmms-eval
+      `--offset/--limit`, last shard runs to the end), one tag per shard, merge with `scripts/summarize_shards.py`.
+      Not yet exercised on a GPU: do one `--smoke-only --shard 1/2` run before the first sharded full run. Jobs are capped at 8 h. Estimates from NVILA
       smoke timing (~11 s/question dense, ~6 s codec): EgoSchema ~2.5 h fits; NExT-QA test (~8.5k questions) ~40 h
       and LVBench (~1.5k) ~7 h do not, nor does Video-MME. Blocks the full runs of everything except EgoSchema.
-- [ ] Selection-identity compare script for gate 1a (dump kept-unit indices per item at `repro-pin`, compare with
-      `extension/pooling-nvila` default `max`).
+- [x] Selection-identity compare script for gate 1a: `scripts/selection_identity.py` (`dump` / `compare`, CPU only;
+      usage in its docstring). Tool smoke on 2 EgoSchema videos passed; the gate itself (≥20+20) is run mode.
 - [ ] MVBench: download through the Qwen smoke run, then NVILA smoke; also smoke the `grid` and `pool` arm sets.
 - [ ] Video-MME: download through the Qwen smoke run, then NVILA smoke; also smoke `grid`, `pool`, `main_pxrepro`
       (Qwen) and check the per-duration splits come out.

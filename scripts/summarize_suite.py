@@ -58,6 +58,23 @@ def status_line(d):
     ])
 
 
+def print_table(res):
+    """One row per arm: res maps mode -> ht.summarize output (None when the arm has no samples)."""
+    print("| Mode | N | Accuracy | Tokens | Visual tokens | Preproc (incl. selector) | of which selector | ViT | LLM "
+          "| **E2E** | Bridge server | Client | E2E check | No letter |")
+    print("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|--:|")
+    for mode, d in res.items():
+        if d is None:
+            print(f"| {mode} | missing | | | | | | | | | | | | |")
+        elif "e2e" not in d:
+            print(f"| {mode} | {d['n']} | {ht.fmt_acc(d['acc'])} | (no timing log) | | | | | | | | | | {d['no_letter']} |")
+        else:
+            print(f"| {mode} | {d['n']} | {ht.fmt_acc(d['acc'])} | {d['tokens']:,.0f} | {ht.fmt_n(d.get('visual'))} | {d['preproc']:.2f} s "
+                  f"| {ht.fmt_selector(d)} | {d['vit']:.2f} s | {d['llm']:.2f} s | **{d['e2e']:.2f} s** "
+                  f"| {ht.fmt_s(d.get('server'))} | {ht.fmt_s(d.get('client'))} | {ht.e2e_check(d)} "
+                  f"| {d['no_letter']}/{d['n']} |")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("suite_dir")
@@ -91,19 +108,7 @@ def main():
         for mode in arms:
             text, _ = read_info(os.path.join(stage_dir, mode))
             print(f"<details><summary>run_info.txt ({mode})</summary>\n\n```\n{text.rstrip()}\n```\n</details>\n")
-        print("| Mode | N | Accuracy | Tokens | Visual tokens | Preproc (incl. selector) | of which selector | ViT | LLM "
-              "| **E2E** | Bridge server | Client | E2E check | No letter |")
-        print("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|--:|")
-        for mode, d in res.items():
-            if d is None:
-                print(f"| {mode} | missing | | | | | | | | | | | | |")
-            elif "e2e" not in d:
-                print(f"| {mode} | {d['n']} | {ht.fmt_acc(d['acc'])} | (no timing log) | | | | | | | | | | {d['no_letter']} |")
-            else:
-                print(f"| {mode} | {d['n']} | {ht.fmt_acc(d['acc'])} | {d['tokens']:,.0f} | {ht.fmt_n(d.get('visual'))} | {d['preproc']:.2f} s "
-                      f"| {ht.fmt_selector(d)} | {d['vit']:.2f} s | {d['llm']:.2f} s | **{d['e2e']:.2f} s** "
-                      f"| {ht.fmt_s(d.get('server'))} | {ht.fmt_s(d.get('client'))} | {ht.e2e_check(d)} "
-                      f"| {d['no_letter']}/{d['n']} |")
+        print_table(res)
         ref = REFERENCE.get((model, nvf))
         if stage == "full" and ref:
             print("\n**Reference, for information only** (H100 SXM, same GPU count as this run, model_compat's own prompt, parser and "
