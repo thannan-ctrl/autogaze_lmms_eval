@@ -21,7 +21,7 @@ Everything still open for `EXTENSION_SPEC.md`. F = 128 frames (Qwen3.5-9B, H100 
 
 ## Human actions
 
-- [ ] `settings.run.json`: allow bare `sbatch` of `run_ext.sbatch` and `run_ext_gb200.sbatch` (both path aliases) in
+- [x] (done 2026-10-28) `settings.run.json`: allow bare `sbatch` of `run_ext.sbatch` and `run_ext_gb200.sbatch` (both path aliases) in
       `sandbox.excludedCommands` and in the Slurm `hard_deny` rule.
 - [ ] Cancel Qwen EgoSchema smoke 2891909 once the full EgoSchema run is submitted (keep ≤4 H100).
 - [ ] Delete the TempCompass videos from the HF cache.
