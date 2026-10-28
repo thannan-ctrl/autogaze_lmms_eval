@@ -40,14 +40,14 @@ cross-model comparisons use accuracy and kept-token fraction.
 
 ## 4. Benchmarks
 
-Main grid, six benchmarks (lmms-eval task names; each must be a `generate_until` task with exactly one video per doc):
+Main grid, five benchmarks (lmms-eval task names; each must be a `generate_until` task with exactly one video per doc):
 
 | class | task | notes |
 |---|---|---|
 | anchor | `egoschema_subset` | public 500 |
 | anchor | `videomme` | no subtitles; always also report the official short / medium / long splits |
 | hour-long | `lvbench` | plus Video-MME's long split. `mlvu_dev` (285 GB) and `longvideobench_val_v` (162 GB) dropped for disk (2026-10-27); LongVideoBench is revisited at the end only if lmms-eval can use the local val copy in `/home/scratch.thannan_wwfo/datasets/longvideobench` |
-| short | `mvbench` (default `mvbench_doc_to_visual`), `tempcompass` (mc), `nextqa_mc_test` | `perceptiontest_val_mc` (~210 GB extracted) dropped for disk (2026-10-28); revisited at the end only if disk allows |
+| short | `mvbench` (default `mvbench_doc_to_visual`), `nextqa_mc_test` | dropped: `perceptiontest_val_mc` (~210 GB extracted, disk, 2026-10-28; revisited at the end only if disk allows) and `tempcompass_multi_choice` (human decision, 2026-10-28; its smoke runs passed) |
 
 Excluded until their loaders are fixed: `tomato` (empty list on a missing file), `longtimescope`
 (`sys.exit` on a missing file), `vinoground` (format unchecked). Ablations (Phases 3-4) run on
@@ -80,7 +80,7 @@ frames; if it does not, record that and drop the arm.
   Phase 2 runs one benchmark at a time: lmms-eval downloads it during the first dev smoke run
   (Qwen first, NVILA after, never two downloads of one task at once) → full main grid of both
   models in run mode → the human deletes that benchmark's videos. Order: egoschema_subset (on disk),
-  tempcompass_multi_choice, nextqa_mc_test, lvbench, then mvbench and
+  nextqa_mc_test, lvbench, then mvbench and
   videomme, which stay on disk for Phases 3-4 at the end.
 - Order: Phase 1 → 2 → 3 → 4. Before any full run of a benchmark, its arms pass a 20-question
   smoke run (`dev_` tag): no bridge errors, every response parsed by the lmms-eval scorer, token
@@ -113,7 +113,7 @@ that produces a number (selection identity, NVILA EgoSchema gate, memory check) 
   GB200), `--model --task --arms main|main_pxrepro|grid|pool|gate [--smoke-only] <tag>`. They
   require AutoGaze on `extension/pooling-nvila` and clean; run mode must allow them before Phase 2.
 
-**Phase 2: main grid.** Section 5 main grid on all six benchmarks, both models. Answers G.
+**Phase 2: main grid.** Section 5 main grid on all five benchmarks, both models. Answers G.
 
 **Phase 3: config grid.** Answers P, and M at the cross-model level.
 
